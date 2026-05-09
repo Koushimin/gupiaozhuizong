@@ -545,6 +545,14 @@
       padding: 14px 16px;
       vertical-align: middle;
     }
+    .td-reason-col {
+      max-width: 180px;
+    }
+    .td-reason-col .truncate {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
     .table-view .td-name {
       max-width: 200px;
     }
@@ -607,6 +615,110 @@
     .category-option.active {
       background: rgba(99,102,241,0.15);
     }
+
+    /* ===== Scrolling Ticker ===== */
+    .ticker-container {
+      overflow: hidden;
+      position: relative;
+      border-radius: 12px;
+      padding: 10px 0;
+      margin-bottom: 16px;
+      width: 100%;
+    }
+    .theme-light .ticker-container { background: rgba(255,255,255,0.4); }
+    .theme-dark .ticker-container { background: rgba(30,30,55,0.3); }
+    .ticker-track {
+      display: flex;
+      gap: 32px;
+      animation: tickerScroll 30s linear infinite;
+      width: max-content;
+    }
+    .ticker-track:hover {
+      animation-play-state: paused;
+    }
+    @keyframes tickerScroll {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(-50%); }
+    }
+    .ticker-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .ticker-item:hover {
+      background: rgba(99,102,241,0.1);
+    }
+    .ticker-name {
+      font-weight: 600;
+      font-size: 0.85rem;
+    }
+    .ticker-price {
+      font-weight: 500;
+      font-size: 0.85rem;
+    }
+    .ticker-change {
+      font-weight: 600;
+      font-size: 0.8rem;
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+    .ticker-change.up { background: rgba(220,38,38,0.1); color: #dc2626; }
+    .ticker-change.down { background: rgba(22,163,74,0.1); color: #16a34a; }
+    .ticker-sep {
+      width: 1px;
+      height: 16px;
+      background: rgba(128,128,128,0.2);
+      flex-shrink: 0;
+    }
+
+    /* Stock Detail Sheet */
+    .detail-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+    .detail-overlay.active {
+      opacity: 1;
+      pointer-events: all;
+    }
+    .theme-light .detail-overlay { background: rgba(0,0,0,0.3); }
+    .theme-dark .detail-overlay { background: rgba(0,0,0,0.6); }
+
+    .detail-sheet {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 101;
+      max-height: 70vh;
+      border-radius: 20px 20px 0 0;
+      padding: 24px 24px 32px;
+      transform: translateY(100%);
+      transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      overflow-y: auto;
+    }
+    .detail-sheet.active {
+      transform: translateY(0);
+    }
+    .theme-light .detail-sheet { background: rgba(255,255,255,0.98); }
+    .theme-dark .detail-sheet { background: rgba(20,20,40,0.98); backdrop-filter: blur(30px); }
+    .detail-sheet .handle {
+      width: 36px;
+      height: 4px;
+      border-radius: 2px;
+      margin: 0 auto 16px;
+    }
+    .theme-light .detail-sheet .handle { background: #d1d5db; }
+    .theme-dark .detail-sheet .handle { background: #4b5563; }
 
     /* Summary stats bar */
     .summary-bar {
@@ -795,6 +907,9 @@
       .table-stock-code {
         display: none;
       }
+      .td-reason-col {
+        display: none;
+      }
       .table-view .td-actions button {
         margin-left: 2px;
         padding: 6px 8px;
@@ -806,6 +921,26 @@
       .stocks-grid.compact {
         gap: 10px;
       }
+      .ticker-container {
+        padding: 8px 0;
+        margin-bottom: 10px;
+      }
+      .ticker-track {
+        gap: 20px;
+        animation-duration: 20s;
+      }
+      .ticker-item {
+        padding: 2px 8px;
+        gap: 4px;
+      }
+      .ticker-name, .ticker-price { font-size: 0.75rem; }
+      .ticker-change { font-size: 0.7rem; }
+      .detail-sheet {
+        padding: 20px 16px 28px;
+        max-height: 80vh;
+      }
+      .detail-sheet .grid { gap: 10px; }
+      .detail-sheet .glass-card { padding: 12px !important; }
     }
     @media (min-width: 641px) {
       .mobile-only {
@@ -981,6 +1116,95 @@
   <!-- Main Content -->
   <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
     
+    <!-- Scrolling Stock Ticker -->
+    <div x-show="!loading && stocks.length > 0" class="ticker-container">
+      <div class="ticker-track">
+        <template x-for="stock in sortedStocks" :key="'t-'+stock.id">
+          <div class="ticker-item" @click="openDetail(stock)">
+            <span class="ticker-name" x-text="stock.name"></span>
+            <span class="ticker-price" x-text="formatPrice(stock.current_price)"></span>
+            <span class="ticker-change" :class="(stock.daily_change || 0) >= 0 ? 'up' : 'down'" x-text="formatPercent(stock.daily_change)"></span>
+            <span class="ticker-sep"></span>
+          </div>
+        </template>
+        <!-- Duplicate for seamless loop -->
+        <template x-for="stock in sortedStocks" :key="'t2-'+stock.id">
+          <div class="ticker-item" @click="openDetail(stock)">
+            <span class="ticker-name" x-text="stock.name"></span>
+            <span class="ticker-price" x-text="formatPrice(stock.current_price)"></span>
+            <span class="ticker-change" :class="(stock.daily_change || 0) >= 0 ? 'up' : 'down'" x-text="formatPercent(stock.daily_change)"></span>
+            <span class="ticker-sep"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Stock Detail Sheet -->
+    <div class="detail-overlay" :class="detailStock ? 'active' : ''" @click="closeDetail()"></div>
+    <div class="detail-sheet" :class="detailStock ? 'active' : ''">
+      <div class="handle"></div>
+      <template x-if="detailStock">
+        <div>
+          <!-- Header -->
+          <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-2">
+              <span class="text-xl font-bold" x-text="detailStock.name"></span>
+              <span class="market-tag" :class="'market-' + detailStock.market" x-text="detailStock.market.toUpperCase()"></span>
+              <span class="stat-label text-sm" x-text="detailStock.code"></span>
+            </div>
+            <button @click="closeDetail()" class="text-2xl opacity-40 hover:opacity-70">✕</button>
+          </div>
+
+          <!-- Price -->
+          <div class="flex items-baseline gap-3 mb-5">
+            <span class="text-3xl font-bold" x-text="formatPrice(detailStock.current_price)"></span>
+            <span class="text-lg font-semibold" :class="(detailStock.daily_change || 0) >= 0 ? 'price-up' : 'price-down'"
+                  x-text="formatPercent(detailStock.daily_change)"></span>
+          </div>
+
+          <!-- Info grid -->
+          <div class="grid grid-cols-2 gap-4">
+            <div class="glass-card !p-4" style="border-radius:12px;">
+              <p class="text-xs stat-label mb-1">📅 加入日期</p>
+              <p class="font-semibold text-sm" x-text="detailStock.join_date || '--'"></p>
+            </div>
+            <div class="glass-card !p-4" style="border-radius:12px;">
+              <p class="text-xs stat-label mb-1">💰 加入价格</p>
+              <p class="font-semibold text-sm" x-text="formatPrice(detailStock.added_price)"></p>
+            </div>
+            <div class="glass-card !p-4" style="border-radius:12px;">
+              <p class="text-xs stat-label mb-1">📈 加入至今涨幅</p>
+              <p class="font-semibold text-sm" :class="detailStock.change_percent >= 0 ? 'price-up' : 'price-down'"
+                 x-text="formatPercent(detailStock.change_percent)"></p>
+            </div>
+            <div class="glass-card !p-4" style="border-radius:12px;">
+              <p class="text-xs stat-label mb-1">📊 分类</p>
+              <p class="font-semibold text-sm" x-text="getCategoryName(detailStock.category_id) || '未分类'" 
+                 :style="getCategoryName(detailStock.category_id) ? 'color:' + getCategoryColor(detailStock.category_id) : ''"></p>
+            </div>
+            <div class="glass-card !p-4" style="border-radius:12px;">
+              <p class="text-xs stat-label mb-1">🏆 区间最高</p>
+              <p class="font-semibold text-sm price-up" x-text="formatPrice(detailStock.highest_price)"></p>
+            </div>
+            <div class="glass-card !p-4" style="border-radius:12px;">
+              <p class="text-xs stat-label mb-1">📉 区间最低</p>
+              <p class="font-semibold text-sm price-down" x-text="formatPrice(detailStock.lowest_price)"></p>
+            </div>
+          </div>
+
+          <!-- Reason + Notes -->
+          <div x-show="detailStock.reason" class="mt-4 glass-card !p-4" style="border-radius:12px;">
+            <p class="text-xs stat-label mb-1">💡 加入理由</p>
+            <p class="text-sm reason-text leading-relaxed" x-text="detailStock.reason"></p>
+          </div>
+          <div x-show="detailStock.notes" class="mt-3 glass-card !p-4" style="border-radius:12px;">
+            <p class="text-xs stat-label mb-1">📝 备注</p>
+            <p class="text-sm notes-text leading-relaxed" x-text="detailStock.notes"></p>
+          </div>
+        </div>
+      </template>
+    </div>
+
     <!-- Summary Stats Bar -->
     <div x-show="stocks.length > 0 && !loading" class="summary-bar">
       <div class="summary-item">
@@ -1060,7 +1284,7 @@
           <table class="table-view">
             <thead>
               <tr class="table-header">
-                <th @click="toggleSort('time')" style="min-width:160px">
+                <th @click="toggleSort('time')" style="min-width:140px">
                   股票 <span x-show="sortBy === 'time'" x-text="sortAsc ? '↑' : '↓'"></span>
                 </th>
                 <th class="text-right">现价</th>
@@ -1068,8 +1292,9 @@
                 <th @click="toggleSort('return')" class="text-right">
                   加入至今 <span x-show="sortBy === 'return'" x-text="sortAsc ? '↑' : '↓'"></span>
                 </th>
-                <th class="text-right table-stock-code">最高/最低</th>
-                <th class="text-right">操作</th>
+                <th class="text-right table-stock-code" style="white-space:nowrap;">区间最高/最低</th>
+                <th class="td-reason-col" style="min-width:120px;">加入理由</th>
+                <th class="text-right" style="min-width:85px;">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -1084,21 +1309,27 @@
                       <span class="market-tag text-xs flex-shrink-0" :class="'market-' + stock.market" x-text="stock.market.toUpperCase()"></span>
                     </div>
                   </td>
-                  <td class="td-price text-right">
+                  <td class="td-price text-right whitespace-nowrap">
                     <span x-text="formatPrice(stock.current_price)"></span>
                   </td>
-                  <td class="td-change text-right" :class="(stock.daily_change || 0) >= 0 ? 'price-up' : 'price-down'">
+                  <td class="td-change text-right whitespace-nowrap" :class="(stock.daily_change || 0) >= 0 ? 'price-up' : 'price-down'">
                     <span x-text="formatPercent(stock.daily_change)"></span>
                   </td>
-                  <td class="td-since text-right" :class="stock.change_percent >= 0 ? 'price-up' : 'price-down'">
+                  <td class="td-since text-right whitespace-nowrap" :class="stock.change_percent >= 0 ? 'price-up' : 'price-down'">
                     <span x-text="formatPercent(stock.change_percent)"></span>
                   </td>
-                  <td class="text-right text-xs opacity-60 table-stock-code">
-                    <span x-text="formatPrice(stock.highest_price)"></span> / <span x-text="formatPrice(stock.lowest_price)"></span>
+                  <td class="text-right text-xs opacity-60 table-stock-code whitespace-nowrap">
+                    <span class="price-up" x-text="formatPrice(stock.highest_price)"></span>
+                    <span class="opacity-40">/</span>
+                    <span class="price-down" x-text="formatPrice(stock.lowest_price)"></span>
                   </td>
-                  <td class="td-actions">
-                    <button @click="openEditModal(stock)" class="btn-icon" title="编辑" style="width:32px;height:32px;font-size:0.9rem;">✏️</button>
-                    <button @click="removeStock(stock.id, stock.name)" class="btn-danger" style="padding:4px 10px;font-size:0.75rem;">移除</button>
+                  <td class="td-reason-col text-xs" style="max-width:180px;">
+                    <span x-show="stock.reason" class="truncate block" x-text="stock.reason" :title="stock.reason"></span>
+                    <span x-show="!stock.reason" class="opacity-40">—</span>
+                  </td>
+                  <td class="td-actions whitespace-nowrap">
+                    <button @click="openEditModal(stock)" class="btn-icon" title="编辑" style="width:30px;height:30px;font-size:0.85rem;display:inline-flex;">✏️</button>
+                    <button @click="removeStock(stock.id, stock.name)" class="btn-danger" style="padding:4px 10px;font-size:0.7rem;">移除</button>
                   </td>
                 </tr>
               </template>
@@ -1613,7 +1844,7 @@
         stockListExpanded: localStorage.getItem('stockListExpanded') !== 'false',
         sortBy: localStorage.getItem('sortBy') || 'time',
         sortAsc: localStorage.getItem('sortAsc') === 'true',
-        viewMode: localStorage.getItem('viewMode') || 'card',
+        viewMode: localStorage.getItem('viewMode') || 'table',
 
         // Categories
         categories: [],
@@ -1664,6 +1895,9 @@
 
         // Mobile
         mobileMenuOpen: false,
+
+        // Stock Detail
+        detailStock: null,
 
         // ===== Init =====
         init() {
@@ -2045,6 +2279,18 @@
               this.lastUpdated = new Date().toLocaleTimeString();
             }
           } catch (e) {}
+        },
+
+        // ===== Stock Detail =====
+
+        openDetail(stock) {
+          this.detailStock = stock;
+          document.body.style.overflow = 'hidden';
+        },
+
+        closeDetail() {
+          this.detailStock = null;
+          document.body.style.overflow = '';
         },
 
         // ===== Search & Add =====
