@@ -210,7 +210,7 @@ app.post('/api/stocks/historical-price', async (req, res) => {
  */
 app.post('/api/stocks/add', async (req, res) => {
   try {
-    const { code, name: clientName, market: inputMarket, reason, joinDate } = req.body;
+    const { code, name: clientName, market: inputMarket, reason, joinDate, category_id } = req.body;
     
     if (!code || !code.trim()) {
       return res.status(400).json({ success: false, error: '请输入股票代码' });
@@ -280,13 +280,14 @@ app.post('/api/stocks/add', async (req, res) => {
 
     // Insert stock
     const result = db.prepare(`
-      INSERT INTO stocks (code, market, name, reason, added_price, current_price, highest_price, lowest_price, change_percent, join_date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO stocks (code, market, name, reason, category_id, added_price, current_price, highest_price, lowest_price, change_percent, join_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       cleanCode,
       stockInfo.market || market,
       stockInfo.name || cleanCode,
       reason || '',
+      category_id || null,
       joinPrice,
       joinPrice,
       stockInfo.high || joinPrice,
@@ -580,6 +581,212 @@ app.post('/api/tunnel/stop', (req, res) => {
  */
 app.get('/api/tunnel/status', (req, res) => {
   res.json({ success: true, running: !!tunnelUrl, url: tunnelUrl });
+});
+
+/**
+ * PUT /api/stocks/:id - Edit stock info (name, reason, notes)
+ */
+app.put('/api/stocks/:id', (req, res) => {
+  try {
+    const db = getDb();
+    const stock = db.prepare('SELECT * FROM stocks WHERE id = ? AND is_active = 1').get(req.params.id);
+    
+    if (!stock) {
+      return res.status(404).json({ success: false, error: '股票不存在' });
+    }
+
+    const { name, reason, notes } = req.body;
+    const updateFields = [];
+    const updateParams = [];
+
+    if (name !== undefined) {
+      updateFields.push('name = ?');
+      updateParams.push(name.trim());
+    }
+    if (reason !== undefined) {
+      updateFields.push('reason = ?');
+      updateParams.push(reason.trim());
+    }
+    if (notes !== undefined) {
+      updateFields.push('notes = ?');
+      updateParams.push(notes.trim());
+    }
+
+    if (updateFields.length === 0) {
+      return res.json({ success: true, message: '没有需要更新的字段' });
+    }
+
+    updateFields.push('updated_at = CURRENT_TIMESTAMP');
+    updateParams.push(req.params.id);
+
+    db.prepare(`UPDATE stocks SET ${updateFields.join(', ')} WHERE id = ?`).run(...updateParams);
+
+    const updated = db.prepare('SELECT * FROM stocks WHERE id = ?').get(req.params.id);
+    res.json({ success: true, message: '股票信息已更新', data: updated });
+  } catch (error) {
+    console.error('[API] Edit error:', error);
+    res.status(500).json({ success: false, error: '编辑失败' });
+  }
+});
+
+/**
+ * PUT /api/stocks/:id/category - Move stock to category
+ */
+app.put('/api/stocks/:id/category', (req, res) => {
+  try {
+    const db = getDb();
+    const stock = db.prepare('SELECT * FROM stocks WHERE id = ? AND is_active = 1').get(req.params.id);
+    
+    if (!stock) {
+      return res.status(404).json({ success: false, error: '股票不存在' });
+    }
+
+    const { category_id } = req.body;
+    // category_id can be null (uncategorized) or a valid category id
+    if (category_id !== null && category_id !== undefined) {
+      const cat = db.prepare('SELECT id FROM categories WHERE id = ?').get(category_id);
+      if (!cat) {
+        return res.status(400).json({ success: false, error: '分类不存在' });
+      }
+    }
+
+    db.prepare('UPDATE stocks SET category_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(category_id || null, req.params.id);
+
+    res.json({ success: true, message: '分类已更新' });
+  } catch (error) {
+    console.error('[API] Category change error:', error);
+    res.status(500).json({ success: false, error: '更新分类失败' });
+  }
+});
+
+/**
+ * ===== Category Routes =====
+ */
+
+/**
+ * GET /api/categories - List all categories with their stocks
+ */
+app.get('/api/categories', (req, res) => {
+  try {
+    const db = getDb();
+    const categories = db.prepare('SELECT * FROM categories ORDER BY sort_order ASC, name ASC').all();
+    
+    // Get stocks grouped by category
+    const stocksByCategory = {};
+    const uncategorizedStocks = db.prepare(`
+      SELECT * FROM stocks WHERE is_active = 1 AND category_id IS NULL ORDER BY created_at DESC
+    `).all();
+
+    const catStmt = db.prepare(`
+      SELECT * FROM stocks WHERE is_active = 1 AND category_id = ? ORDER BY created_at DESC
+    `);
+
+    const result = categories.map(cat => {
+      const stocks = catStmt.all(cat.id);
+      return { ...cat, stocks };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        categories: result,
+        uncategorized: uncategorizedStocks,
+      },
+    });
+  } catch (error) {
+    console.error('[API] Categories error:', error);
+    res.status(500).json({ success: false, error: '获取分类列表失败' });
+  }
+});
+
+/**
+ * POST /api/categories - Create a new category
+ */
+app.post('/api/categories', (req, res) => {
+  try {
+    const { name, color } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, error: '请输入分类名称' });
+    }
+
+    const db = getDb();
+    
+    // Get max sort_order
+    const maxOrder = db.prepare('SELECT MAX(sort_order) as max_order FROM categories').get();
+    const nextOrder = (maxOrder?.max_order || 0) + 1;
+
+    const result = db.prepare(`
+      INSERT INTO categories (name, color, sort_order)
+      VALUES (?, ?, ?)
+    `).run(name.trim(), color || '#6366f1', nextOrder);
+
+    const category = db.prepare('SELECT * FROM categories WHERE id = ?').get(result.lastInsertRowid);
+    res.json({ success: true, message: `分类 "${name}" 已创建`, data: category });
+  } catch (error) {
+    console.error('[API] Create category error:', error);
+    res.status(500).json({ success: false, error: '创建分类失败' });
+  }
+});
+
+/**
+ * PUT /api/categories/:id - Update category
+ */
+app.put('/api/categories/:id', (req, res) => {
+  try {
+    const db = getDb();
+    const cat = db.prepare('SELECT * FROM categories WHERE id = ?').get(req.params.id);
+    if (!cat) {
+      return res.status(404).json({ success: false, error: '分类不存在' });
+    }
+
+    const { name, color, sort_order } = req.body;
+    const updateFields = [];
+    const updateParams = [];
+
+    if (name !== undefined) { updateFields.push('name = ?'); updateParams.push(name.trim()); }
+    if (color !== undefined) { updateFields.push('color = ?'); updateParams.push(color); }
+    if (sort_order !== undefined) { updateFields.push('sort_order = ?'); updateParams.push(sort_order); }
+    
+    if (updateFields.length === 0) {
+      return res.json({ success: true, message: '没有需要更新的字段' });
+    }
+
+    updateFields.push('updated_at = CURRENT_TIMESTAMP');
+    updateParams.push(req.params.id);
+
+    db.prepare(`UPDATE categories SET ${updateFields.join(', ')} WHERE id = ?`).run(...updateParams);
+
+    const updated = db.prepare('SELECT * FROM categories WHERE id = ?').get(req.params.id);
+    res.json({ success: true, message: '分类已更新', data: updated });
+  } catch (error) {
+    console.error('[API] Update category error:', error);
+    res.status(500).json({ success: false, error: '更新分类失败' });
+  }
+});
+
+/**
+ * DELETE /api/categories/:id - Delete category (stocks become uncategorized)
+ */
+app.delete('/api/categories/:id', (req, res) => {
+  try {
+    const db = getDb();
+    const cat = db.prepare('SELECT * FROM categories WHERE id = ?').get(req.params.id);
+    if (!cat) {
+      return res.status(404).json({ success: false, error: '分类不存在' });
+    }
+
+    // Move stocks to uncategorized
+    db.prepare('UPDATE stocks SET category_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE category_id = ?')
+      .run(req.params.id);
+    
+    db.prepare('DELETE FROM categories WHERE id = ?').run(req.params.id);
+
+    res.json({ success: true, message: `分类 "${cat.name}" 已删除` });
+  } catch (error) {
+    console.error('[API] Delete category error:', error);
+    res.status(500).json({ success: false, error: '删除分类失败' });
+  }
 });
 
 /**

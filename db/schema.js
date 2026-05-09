@@ -24,12 +24,23 @@ function getDb() {
 
 function initSchema() {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      color TEXT DEFAULT '#6366f1',
+      sort_order INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS stocks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       code TEXT NOT NULL,
       market TEXT NOT NULL DEFAULT 'sh',
       name TEXT NOT NULL,
+      category_id INTEGER DEFAULT NULL,
       reason TEXT,
+      notes TEXT DEFAULT '',
       added_price REAL NOT NULL,
       current_price REAL,
       highest_price REAL,
@@ -39,7 +50,8 @@ function initSchema() {
       daily_change REAL DEFAULT 0,
       is_active INTEGER DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS stock_prices (
@@ -55,6 +67,7 @@ function initSchema() {
 
     CREATE INDEX IF NOT EXISTS idx_stock_prices_stock_id ON stock_prices(stock_id);
     CREATE INDEX IF NOT EXISTS idx_stock_prices_recorded_at ON stock_prices(recorded_at);
+    CREATE INDEX IF NOT EXISTS idx_stocks_category_id ON stocks(category_id);
 
     CREATE TABLE IF NOT EXISTS research_reports (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,6 +90,8 @@ function initSchema() {
   // Add columns for backward compatibility with existing databases
   try { db.exec("ALTER TABLE stocks ADD COLUMN join_date TEXT DEFAULT ''"); } catch(e) {}
   try { db.exec("ALTER TABLE stocks ADD COLUMN daily_change REAL DEFAULT 0"); } catch(e) {}
+  try { db.exec("ALTER TABLE stocks ADD COLUMN category_id INTEGER DEFAULT NULL"); } catch(e) {}
+  try { db.exec("ALTER TABLE stocks ADD COLUMN notes TEXT DEFAULT ''"); } catch(e) {}
 
   // Migrate existing stocks: set join_date from created_at if empty
   try {
