@@ -1,0 +1,860 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const os = require('os');
+const { getDb } = require('./db/schema');
+const StockDataService = require('./services/stockService');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// ====== Global Error Handlers (prevents server crash) ======
+process.on('uncaughtException', (err) => {
+  console.error(`[FATAL] Uncaught Exception: ${err.message}`);
+  console.error(err.stack);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error(`[FATAL] Unhandled Rejection: ${reason}`);
+});
+
+// ====== Helper: Get local network IP ======
+function getNetworkIP() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return '127.0.0.1';
+}
+
+// Middleware
+app.use(cors());
+app.use(express.json({ limit: '1mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+// View engine setup (for server-rendered pages)
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+
+// ==================== API Routes ====================
+
+/**
+ * GET / - Main dashboard page
+ */
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+/**
+ * GET /api/stocks - List all active stocks
+ */
+app.get('/api/stocks', (req, res) => {
+  try {
+    const db = getDb();
+    const stocks = db.prepare(`
+      SELECT * FROM stocks WHERE is_active = 1 ORDER BY created_at DESC
+    `).all();
+
+    // Get latest price records
+    const stmt = db.prepare(`
+      SELECT * FROM stock_prices 
+      WHERE stock_id = ? 
+      ORDER BY recorded_at DESC 
+      LIMIT 1
+    `);
+
+    const stocksWithData = stocks.map(stock => {
+      const latestPrice = stmt.get(stock.id);
+      return {
+        ...stock,
+        price_history_count: latestPrice ? 1 : 0,
+      };
+    });
+
+    res.json({ success: true, data: stocksWithData });
+  } catch (error) {
+    console.error('[API] Error fetching stocks:', error);
+    res.status(500).json({ success: false, error: '获取股票列表失败' });
+  }
+});
+
+/**
+ * GET /api/stocks/:id/detail - Get stock detail with price history
+ */
+app.get('/api/stocks/:id/detail', (req, res) => {
+  try {
+    const db = getDb();
+    const stock = db.prepare('SELECT * FROM stocks WHERE id = ?').get(req.params.id);
+    
+    if (!stock) {
+      return res.status(404).json({ success: false, error: '股票不存在' });
+    }
+
+    const priceHistory = db.prepare(`
+      SELECT price, high, low, change_percent, recorded_at 
+      FROM stock_prices 
+      WHERE stock_id = ? 
+      ORDER BY recorded_at ASC
+    `).all(req.params.id);
+
+    res.json({ success: true, data: { ...stock, priceHistory } });
+  } catch (error) {
+    console.error('[API] Error fetching stock detail:', error);
+    res.status(500).json({ success: false, error: '获取股票详情失败' });
+  }
+});
+
+/**
+ * POST /api/stocks/search - Search stock by code, name, or pinyin
+ * Uses fuzzy search when query is not a plain code
+ */
+app.post('/api/stocks/search', async (req, res) => {
+  try {
+    const { code } = req.body;
+    if (!code || !code.trim()) {
+      return res.status(400).json({ success: false, error: '请输入股票代码、名称或拼音' });
+    }
+
+    const query = code.toString().trim();
+    
+    // Try fuzzy search first (supports name, pinyin, code)
+    const results = await StockDataService.searchStocks(query);
+    
+    if (results.length === 0) {
+      // Fallback: try as direct stock code
+      try {
+        const cleanCode = query;
+        const market = StockDataService.detectMarket(cleanCode);
+        const stockData = await StockDataService.fetchStockData(cleanCode, market);
+        
+        const db = getDb();
+        const existing = db.prepare('SELECT id, name FROM stocks WHERE code = ? AND is_active = 1').get(cleanCode);
+
+        return res.json({
+          success: true,
+          data: {
+            ...stockData,
+            alreadyTracked: !!existing,
+            searchResults: [],
+          },
+        });
+      } catch (e) {
+        return res.status(404).json({ success: false, error: `未找到股票"${query}"`, searchResults: [] });
+      }
+    }
+
+    // Return search results - always, even with 1 result
+    const searchResults = results.slice(0, 8);
+    
+    // Get real-time price for the first result
+    const first = searchResults[0];
+    let firstData = null;
+    try {
+      firstData = await StockDataService.fetchStockData(first.code, first.market);
+    } catch (e) {
+      // ignore real-time fetch error
+    }
+
+    // Check if any are already tracked
+    const db = getDb();
+    const trackedCodes = db.prepare('SELECT code FROM stocks WHERE is_active = 1').all()
+      .map(s => s.code);
+
+    res.json({
+      success: true,
+      data: {
+        ...(firstData || searchResults[0]),
+        searchResults: searchResults.map(s => ({
+          ...s,
+          alreadyTracked: trackedCodes.includes(s.code),
+        })),
+      },
+    });
+  } catch (error) {
+    console.error('[API] Search error:', error);
+    res.status(500).json({ success: false, error: `搜索失败: ${error.message}` });
+  }
+});
+
+/**
+ * POST /api/stocks/historical-price - Get historical closing price for a date
+ */
+app.post('/api/stocks/historical-price', async (req, res) => {
+  try {
+    const { code, market, date } = req.body;
+    if (!code || !date) {
+      return res.status(400).json({ success: false, error: '缺少股票代码或日期' });
+    }
+
+    const cleanCode = code.toString().trim();
+    const mkt = market || StockDataService.detectMarket(cleanCode);
+    const result = await StockDataService.fetchHistoricalPrice(cleanCode, mkt, date);
+
+    if (!result) {
+      return res.json({ success: false, error: `未找到 ${cleanCode} 在 ${date} 的价格数据` });
+    }
+
+    res.json({ success: true, data: result });
+  } catch (error) {
+    console.error('[API] Historical price error:', error);
+    res.status(500).json({ success: false, error: '获取历史价格失败' });
+  }
+});
+
+/**
+ * POST /api/stocks/add - Add stock to watchlist (with optional joinDate)
+ */
+app.post('/api/stocks/add', async (req, res) => {
+  try {
+    const { code, name: clientName, market: inputMarket, reason, joinDate } = req.body;
+    
+    if (!code || !code.trim()) {
+      return res.status(400).json({ success: false, error: '请输入股票代码' });
+    }
+
+    const cleanCode = code.toString().trim();
+    const market = inputMarket || StockDataService.detectMarket(cleanCode);
+
+    // Determine the join price based on date
+    let joinPrice;
+    let stockInfo = { code: cleanCode, market, name: clientName || '' };
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+
+    if (!joinDate || joinDate === today) {
+      // Today: use real-time price
+      const stockData = await StockDataService.fetchStockData(cleanCode, market);
+      joinPrice = stockData.price;
+      stockInfo = { ...stockInfo, ...stockData };
+      // Client-provided name takes priority
+      if (clientName && clientName !== cleanCode) {
+        stockInfo.name = clientName;
+      }
+    } else {
+      // Past date: use historical closing price
+      const histData = await StockDataService.fetchHistoricalPrice(cleanCode, market, joinDate);
+      if (!histData) {
+        return res.status(400).json({
+          success: false,
+          error: `未找到 ${cleanCode} 在 ${joinDate} 的交易数据，${joinDate} 可能为非交易日`,
+        });
+      }
+      joinPrice = histData.close;
+      
+      // Try to get name: client provided > search API > real-time API > code
+      let stockName = (clientName && clientName !== cleanCode) ? clientName : '';
+      if (!stockName) {
+        try {
+          const searchResults = await StockDataService.searchStocks(cleanCode);
+          if (searchResults.length > 0) {
+            stockName = searchResults[0].name;
+          }
+        } catch (e) { /* ignore */ }
+      }
+      if (!stockName) {
+        try {
+          const rtData = await StockDataService.fetchStockData(cleanCode, market);
+          stockName = rtData.name || cleanCode;
+        } catch (e2) { stockName = cleanCode; }
+      }
+      
+      stockInfo = {
+        ...stockInfo,
+        name: stockName,
+        price: joinPrice,
+        high: histData.high,
+        low: histData.low,
+        changePercent: 0, // will be recalculated on first refresh
+      };
+    }
+
+    // Check duplicate
+    const db = getDb();
+    const existing = db.prepare('SELECT id FROM stocks WHERE code = ? AND is_active = 1').get(cleanCode);
+    if (existing) {
+      return res.status(409).json({ success: false, error: `"${stockInfo.name}(${cleanCode})" 已在追踪列表中` });
+    }
+
+    // Insert stock
+    const result = db.prepare(`
+      INSERT INTO stocks (code, market, name, reason, added_price, current_price, highest_price, lowest_price, change_percent, join_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      cleanCode,
+      stockInfo.market || market,
+      stockInfo.name || cleanCode,
+      reason || '',
+      joinPrice,
+      joinPrice,
+      stockInfo.high || joinPrice,
+      stockInfo.low || joinPrice,
+      stockInfo.changePercent || 0,
+      joinDate || new Date().toISOString().split('T')[0]
+    );
+
+    // Record initial price
+    db.prepare(`
+      INSERT INTO stock_prices (stock_id, price, high, low, change_percent)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(result.lastInsertRowid, joinPrice, stockInfo.high || joinPrice, stockInfo.low || joinPrice, stockInfo.changePercent || 0);
+
+    res.json({
+      success: true,
+      message: `成功添加 "${stockInfo.name || cleanCode}(${cleanCode})" 到追踪列表`,
+      data: { id: result.lastInsertRowid, ...stockInfo, price: joinPrice },
+    });
+  } catch (error) {
+    console.error('[API] Add error:', error);
+    res.status(500).json({ success: false, error: `添加失败: ${error.message}` });
+  }
+});
+
+/**
+ * GET /api/stocks/:id/kline - Get K-line chart data
+ * Query params: type=daily|weekly|monthly|intraday, limit=number
+ */
+app.get('/api/stocks/:id/kline', async (req, res) => {
+  try {
+    const db = getDb();
+    const stock = db.prepare('SELECT id, code, market FROM stocks WHERE id = ?').get(req.params.id);
+    if (!stock) {
+      return res.status(404).json({ success: false, error: '股票不存在' });
+    }
+
+    const type = req.query.type || 'daily';
+    const limit = parseInt(req.query.limit) || 60;
+
+    if (type === 'intraday') {
+      let data = await StockDataService.fetchIntradayData(stock.code, stock.market);
+      // If no intraday data (weekend/holiday), try last few trading days
+      if (!data || data.length === 0) {
+        // Try fetching daily K-line to find the last trading day
+        const dailyData = await StockDataService.fetchKLineData(stock.code, stock.market, 'daily', 5);
+        if (dailyData && dailyData.length > 0) {
+          // Get the last trading day's date and fetch intraday for that day
+          const lastDay = dailyData[dailyData.length - 1];
+          // For last trading day, we don't have intraday data, so return the daily candles as a line
+          data = dailyData.slice(-5).map(d => ({
+            time: d.date,
+            price: d.close,
+            open: d.open,
+            high: d.high,
+            low: d.low,
+            volume: d.volume,
+          }));
+        }
+      }
+      return res.json({ success: true, data });
+    }
+
+    const data = await StockDataService.fetchKLineData(stock.code, stock.market, type, limit);
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('[API] K-line error:', error);
+    res.status(500).json({ success: false, error: '获取K线数据失败' });
+  }
+});
+
+/**
+ * GET /api/chart-image - Proxy Sina Finance chart images (bypass mixed content)
+ * Query params: type=min|daily|weekly|monthly, symbol=sh600519
+ */
+app.get('/api/chart-image', async (req, res) => {
+  const { type, symbol } = req.query;
+  if (!type || !symbol) return res.status(400).end();
+  // Redirect to Sina Finance CDN - works in browsers over HTTP
+  res.redirect(`https://image.sinajs.cn/newchart/${type}/n/${symbol}.gif`);
+});
+
+// ====== Research Reports ======
+
+/**
+ * GET /api/research - List research reports
+ */
+app.get('/api/research', (req, res) => {
+  try {
+    const db = getDb();
+    const { stock_code, search } = req.query;
+    let sql = 'SELECT * FROM research_reports';
+    const conditions = [];
+    const params = [];
+
+    if (stock_code) {
+      conditions.push('stock_code = ?');
+      params.push(stock_code);
+    }
+    if (search) {
+      conditions.push('(title LIKE ? OR stock_name LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`);
+    }
+
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ');
+    }
+    sql += ' ORDER BY created_at DESC';
+
+    const reports = db.prepare(sql).all(...params);
+    // Return only needed fields
+    const simplified = reports.map(r => ({
+      id: r.id, title: r.title, stock_name: r.stock_name,
+      summary: r.summary, created_at: r.created_at,
+    }));
+    res.json({ success: true, data: simplified });
+  } catch (error) {
+    console.error('[API] Research list error:', error);
+    res.status(500).json({ success: false, error: '获取研报列表失败' });
+  }
+});
+
+/**
+ * POST /api/research - Add research report
+ */
+app.post('/api/research', (req, res) => {
+  try {
+    const { title, stock_name, summary } = req.body;
+    
+    // 标题改为可选，摘要为必填
+    if (!summary || !summary.trim()) {
+      return res.status(400).json({ success: false, error: '请输入内容摘要' });
+    }
+
+    const db = getDb();
+    const result = db.prepare(`
+      INSERT INTO research_reports (title, stock_name, summary)
+      VALUES (?, ?, ?)
+    `).run(
+      (title || '').trim() || '无标题',
+      (stock_name || '').trim(),
+      summary.trim(),
+    );
+
+    const report = db.prepare('SELECT id, title, stock_name, summary, created_at FROM research_reports WHERE id = ?').get(result.lastInsertRowid);
+    res.json({ success: true, message: '研报已添加', data: report });
+  } catch (error) {
+    console.error('[API] Research add error:', error);
+    res.status(500).json({ success: false, error: '添加研报失败' });
+  }
+});
+
+/**
+ * DELETE /api/research/:id - Delete research report
+ */
+app.delete('/api/research/:id', (req, res) => {
+  try {
+    const db = getDb();
+    const report = db.prepare('SELECT * FROM research_reports WHERE id = ?').get(req.params.id);
+    if (!report) {
+      return res.status(404).json({ success: false, error: '研报不存在' });
+    }
+    db.prepare('DELETE FROM research_reports WHERE id = ?').run(req.params.id);
+    res.json({ success: true, message: '研报已删除' });
+  } catch (error) {
+    console.error('[API] Research delete error:', error);
+    res.status(500).json({ success: false, error: '删除研报失败' });
+  }
+});
+
+// ====== Tunnel Management (external/public access) ======
+let tunnelUrl = null;
+let tunnelProcess = null;
+
+/**
+ * POST /api/tunnel/start - Start a public tunnel
+ * Tries cloudflared first, falls back to localtunnel
+ */
+app.post('/api/tunnel/start', async (req, res) => {
+  // If tunnel already running, return existing URL
+  if (tunnelUrl) {
+    return res.json({ success: true, url: tunnelUrl });
+  }
+
+  // Try cloudflared first (more stable)
+  try {
+    const { spawn } = require('child_process');
+    
+    // Check if cloudflared is available
+    const cloudflared = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${PORT}`, '--no-autoupdate'], {
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let resolved = false;
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        cloudflared.kill();
+        tryLocaltunnel(res);
+      }
+    }, 15000);
+
+    cloudflared.stderr.on('data', (data) => {
+      const output = data.toString();
+      console.log('[Cloudflared]', output);
+      
+      // Parse URL from cloudflared output
+      const match = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
+      if (match && !resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        tunnelUrl = match[0];
+        tunnelProcess = cloudflared;
+        
+        cloudflared.on('close', () => {
+          console.log('[Tunnel] Cloudflared closed');
+          tunnelUrl = null;
+          tunnelProcess = null;
+        });
+        
+        res.json({ success: true, url: tunnelUrl });
+      }
+    });
+
+    cloudflared.on('error', () => {
+      if (!resolved) {
+        clearTimeout(timeout);
+        tryLocaltunnel(res);
+      }
+    });
+
+  } catch (e) {
+    // cloudflared not available, try localtunnel
+    tryLocaltunnel(res);
+  }
+});
+
+/**
+ * Fallback: try localtunnel
+ */
+function tryLocaltunnel(res) {
+  try {
+    const localtunnel = require('localtunnel');
+    
+    Promise.race([
+      localtunnel({ port: PORT }),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('超时')), 15000)
+      )
+    ]).then(tunnel => {
+      tunnelUrl = tunnel.url;
+      tunnelProcess = tunnel;
+      
+      console.log(`[Tunnel] Localtunnel URL: ${tunnel.url}`);
+      
+      tunnel.on('close', () => {
+        console.log('[Tunnel] Closed');
+        tunnelUrl = null;
+        tunnelProcess = null;
+      });
+      
+      res.json({ success: true, url: tunnel.url });
+    }).catch(error => {
+      console.error('[Tunnel] Localtunnel error:', error.message);
+      res.status(500).json({ 
+        success: false, 
+        error: '无法启动对外分享，请确保已安装 cloudflared 或网络可以访问 localtunnel'
+      });
+    });
+  } catch (e) {
+    res.status(500).json({ 
+      success: false, 
+      error: '未检测到 tunnel 服务，请安装 cloudflared: winget install Cloudflare.cloudflared'
+    });
+  }
+}
+
+/**
+ * POST /api/tunnel/stop - Stop the public tunnel
+ */
+app.post('/api/tunnel/stop', (req, res) => {
+  if (tunnelProcess) {
+    tunnelProcess.close();
+    tunnelProcess = null;
+    tunnelUrl = null;
+  }
+  res.json({ success: true });
+});
+
+/**
+ * GET /api/tunnel/status - Get tunnel status
+ */
+app.get('/api/tunnel/status', (req, res) => {
+  res.json({ success: true, running: !!tunnelUrl, url: tunnelUrl });
+});
+
+/**
+ * DELETE /api/stocks/:id - Remove stock from watchlist
+ */
+app.delete('/api/stocks/:id', (req, res) => {
+  try {
+    const db = getDb();
+    const stock = db.prepare('SELECT * FROM stocks WHERE id = ? AND is_active = 1').get(req.params.id);
+    
+    if (!stock) {
+      return res.status(404).json({ success: false, error: '股票不存在或已删除' });
+    }
+
+    db.prepare('UPDATE stocks SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
+
+    res.json({
+      success: true,
+      message: `已移除 "${stock.name}(${stock.code})" 从追踪列表`,
+    });
+  } catch (error) {
+    console.error('[API] Delete error:', error);
+    res.status(500).json({ success: false, error: '删除失败' });
+  }
+});
+
+/**
+ * POST /api/stocks/refresh - Refresh all active stock prices
+ */
+app.post('/api/stocks/refresh', async (req, res) => {
+  try {
+    const db = getDb();
+    const stocks = db.prepare('SELECT id, code, market, highest_price, lowest_price, added_price FROM stocks WHERE is_active = 1').all();
+
+    if (stocks.length === 0) {
+      return res.json({ success: true, message: '没有需要更新的股票' });
+    }
+
+    const batchData = await StockDataService.fetchBatchStocks(stocks);
+    let updatedCount = 0;
+
+    const updateStmt = db.prepare(`
+      UPDATE stocks 
+      SET current_price = ?,
+          highest_price = ?,
+          lowest_price = ?,
+          max_drawdown = ?,
+          change_percent = ?,
+          daily_change = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `);
+
+    const insertPriceStmt = db.prepare(`
+      INSERT INTO stock_prices (stock_id, price, high, low, change_percent)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+
+    const updateMany = db.transaction((updates) => {
+      for (const update of updates) {
+        updateStmt.run(...update.stockParams);
+        insertPriceStmt.run(...update.priceParams);
+      }
+    });
+
+    const updates = [];
+    for (const stock of stocks) {
+      const key = `${stock.market}${stock.code}`;
+      const data = batchData[key];
+      
+      if (data && data.price > 0) {
+        const currentPrice = data.price;
+        const highestPrice = Math.max(stock.highest_price || currentPrice, data.high || currentPrice, currentPrice);
+        const lowestPrice = Math.min(stock.lowest_price || currentPrice, data.low || currentPrice, currentPrice);
+        
+        // Max drawdown = (lowest - highest) / highest * 100 (negative value)
+        const maxDrawdown = highestPrice > 0 
+          ? parseFloat(((lowestPrice - highestPrice) / highestPrice * 100).toFixed(2))
+          : 0;
+
+        // ALWAYS calculate change from added price, not from API's daily change
+        const changeFromAdded = stock.added_price > 0
+          ? parseFloat(((currentPrice - stock.added_price) / stock.added_price * 100).toFixed(2))
+          : 0;
+
+        updates.push({
+          stockParams: [
+            currentPrice,
+            highestPrice,
+            lowestPrice,
+            maxDrawdown,
+            changeFromAdded,
+            data.changePercent || 0,
+            stock.id,
+          ],
+          priceParams: [
+            stock.id,
+            currentPrice,
+            data.high || currentPrice,
+            data.low || currentPrice,
+            changeFromAdded,
+          ],
+        });
+
+        updatedCount++;
+      }
+    }
+
+    if (updates.length > 0) {
+      updateMany(updates);
+    }
+
+    res.json({
+      success: true,
+      message: `成功更新 ${updatedCount} 只股票价格`,
+    });
+  } catch (error) {
+    console.error('[API] Refresh error:', error);
+    res.status(500).json({ success: false, error: '更新价格失败' });
+  }
+});
+
+/**
+ * GET /api/stocks/refresh-prices - Server-side scheduled refresh
+ */
+app.get('/api/stocks/refresh-prices', async (req, res) => {
+  // This endpoint is called by the scheduler
+  try {
+    const db = getDb();
+    const stocks = db.prepare('SELECT id, code, market, highest_price, lowest_price, added_price FROM stocks WHERE is_active = 1').all();
+
+    if (stocks.length === 0) {
+      return res.status(200).end('ok');
+    }
+
+    const batchData = await StockDataService.fetchBatchStocks(stocks);
+
+    const updateStmt = db.prepare(`
+      UPDATE stocks 
+      SET current_price = ?,
+          highest_price = ?,
+          lowest_price = ?,
+          max_drawdown = ?,
+          change_percent = ?,
+          daily_change = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `);
+
+    const insertPriceStmt = db.prepare(`
+      INSERT INTO stock_prices (stock_id, price, high, low, change_percent)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+
+    const updateMany = db.transaction((updates) => {
+      for (const update of updates) {
+        updateStmt.run(...update.stockParams);
+        insertPriceStmt.run(...update.priceParams);
+      }
+    });
+
+    const updates = [];
+    for (const stock of stocks) {
+      const key = `${stock.market}${stock.code}`;
+      const data = batchData[key];
+      
+      if (data && data.price > 0) {
+        const currentPrice = data.price;
+        const highestPrice = Math.max(stock.highest_price || currentPrice, data.high || currentPrice, currentPrice);
+        const lowestPrice = Math.min(stock.lowest_price || currentPrice, data.low || currentPrice, currentPrice);
+        const maxDrawdown = highestPrice > 0 
+          ? parseFloat(((lowestPrice - highestPrice) / highestPrice * 100).toFixed(2))
+          : 0;
+        const changeFromAdded = stock.added_price > 0
+          ? parseFloat(((currentPrice - stock.added_price) / stock.added_price * 100).toFixed(2))
+          : 0;
+
+        updates.push({
+          stockParams: [
+            currentPrice, highestPrice, lowestPrice, maxDrawdown,
+            changeFromAdded, stock.id,
+          ],
+          priceParams: [
+            stock.id, currentPrice, data.high || currentPrice,
+            data.low || currentPrice, changeFromAdded,
+          ],
+        });
+      }
+    }
+
+    if (updates.length > 0) {
+      updateMany(updates);
+    }
+
+    res.status(200).end('ok');
+  } catch (error) {
+    console.error('[Scheduler] Refresh error:', error);
+    res.status(200).end('error');
+  }
+});
+
+// ==================== Start Server ====================
+
+const HOST = '0.0.0.0'; // Bind to all network interfaces
+const localIP = getNetworkIP();
+
+app.listen(PORT, HOST, () => {
+  console.log('╔══════════════════════════════════════════════════════╗');
+  console.log('║       📈 股票追踪助手 v1.0                           ║');
+  console.log('╠══════════════════════════════════════════════════════╣');
+  console.log(`║  本机访问:    http://localhost:${PORT}                    ║`);
+  if (localIP) {
+    console.log(`║  局域网访问:  http://${localIP}:${PORT}             ║`);
+    console.log('║  分享给同一Wi-Fi/局域网下的其他人使用此地址          ║');
+  }
+  console.log('║  数据源: 腾讯财经 (qt.gtimg.cn)                      ║');
+  console.log('║  自动刷新: 每5分钟                                   ║');
+  console.log('║                                                      ║');
+  console.log('║  ⚠ 关闭此窗口 = 服务停止                              ║');
+  console.log('╚══════════════════════════════════════════════════════╝');
+});
+
+// Set up auto-refresh every 5 minutes
+const REFRESH_INTERVAL = parseInt(process.env.STOCK_UPDATE_INTERVAL) || 300000;
+setInterval(async () => {
+  console.log(`[${new Date().toLocaleTimeString()}] 自动更新股票价格...`);
+  try {
+    const db = getDb();
+    const stocks = db.prepare('SELECT id, code, market, highest_price, lowest_price, added_price FROM stocks WHERE is_active = 1').all();
+
+    if (stocks.length === 0) return;
+
+    const batchData = await StockDataService.fetchBatchStocks(stocks);
+
+    const updateStmt = db.prepare(`
+      UPDATE stocks 
+      SET current_price = ?,
+          highest_price = ?,
+          lowest_price = ?,
+          max_drawdown = ?,
+          change_percent = ?,
+          daily_change = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `);
+
+    const insertPriceStmt = db.prepare(`
+      INSERT INTO stock_prices (stock_id, price, high, low, change_percent)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+
+    for (const stock of stocks) {
+      const key = `${stock.market}${stock.code}`;
+      const data = batchData[key];
+      
+      if (data && data.price > 0) {
+        const currentPrice = data.price;
+        const highestPrice = Math.max(stock.highest_price || currentPrice, data.high || currentPrice, currentPrice);
+        const lowestPrice = Math.min(stock.lowest_price || currentPrice, data.low || currentPrice, currentPrice);
+        const maxDrawdown = highestPrice > 0 
+          ? parseFloat(((lowestPrice - highestPrice) / highestPrice * 100).toFixed(2))
+          : 0;
+        const changeFromAdded = stock.added_price > 0
+          ? parseFloat(((currentPrice - stock.added_price) / stock.added_price * 100).toFixed(2))
+          : 0;
+
+        updateStmt.run(currentPrice, highestPrice, lowestPrice, maxDrawdown,
+          changeFromAdded, data.changePercent || 0, stock.id);
+        insertPriceStmt.run(stock.id, currentPrice, data.high || currentPrice,
+          data.low || currentPrice, changeFromAdded);
+      }
+    }
+
+    console.log(`[${new Date().toLocaleTimeString()}] 更新完成`);
+  } catch (error) {
+    console.error('[Scheduler] Error:', error.message);
+  }
+}, REFRESH_INTERVAL);
