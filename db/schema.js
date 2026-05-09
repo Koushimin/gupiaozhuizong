@@ -49,6 +49,9 @@ function initSchema() {
       max_drawdown REAL DEFAULT 0,
       change_percent REAL DEFAULT 0,
       daily_change REAL DEFAULT 0,
+      alert_threshold REAL DEFAULT NULL,
+      alert_direction TEXT DEFAULT 'down',
+      alert_triggered INTEGER DEFAULT 0,
       is_active INTEGER DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -94,6 +97,9 @@ function initSchema() {
   try { db.exec("ALTER TABLE stocks ADD COLUMN category_id INTEGER DEFAULT NULL"); } catch(e) {}
   try { db.exec("ALTER TABLE stocks ADD COLUMN notes TEXT DEFAULT ''"); } catch(e) {}
   try { db.exec("ALTER TABLE stocks ADD COLUMN tag TEXT DEFAULT ''"); } catch(e) {}
+  try { db.exec("ALTER TABLE stocks ADD COLUMN alert_threshold REAL DEFAULT NULL"); } catch(e) {}
+  try { db.exec("ALTER TABLE stocks ADD COLUMN alert_direction TEXT DEFAULT 'down'"); } catch(e) {}
+  try { db.exec("ALTER TABLE stocks ADD COLUMN alert_triggered INTEGER DEFAULT 0"); } catch(e) {}
 
   // Migrate existing stocks: set join_date from created_at if empty
   try {

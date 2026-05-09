@@ -595,7 +595,7 @@ app.put('/api/stocks/:id', (req, res) => {
       return res.status(404).json({ success: false, error: '股票不存在' });
     }
 
-    const { name, reason, notes, tag } = req.body;
+    const { name, reason, notes, tag, alert_threshold, alert_direction } = req.body;
     const updateFields = [];
     const updateParams = [];
 
@@ -614,6 +614,16 @@ app.put('/api/stocks/:id', (req, res) => {
     if (tag !== undefined) {
       updateFields.push('tag = ?');
       updateParams.push(tag);
+    }
+    if (alert_threshold !== undefined) {
+      updateFields.push('alert_threshold = ?');
+      updateParams.push(alert_threshold !== null ? parseFloat(alert_threshold) : null);
+      // Reset trigger when threshold changes
+      updateFields.push('alert_triggered = 0');
+    }
+    if (alert_direction !== undefined) {
+      updateFields.push('alert_direction = ?');
+      updateParams.push(alert_direction);
     }
 
     if (updateFields.length === 0) {
@@ -661,6 +671,21 @@ app.put('/api/stocks/:id/category', (req, res) => {
   } catch (error) {
     console.error('[API] Category change error:', error);
     res.status(500).json({ success: false, error: '更新分类失败' });
+  }
+});
+
+/**
+ * POST /api/stocks/:id/alert-reset - Reset alert trigger for a stock
+ */
+app.post('/api/stocks/:id/alert-reset', (req, res) => {
+  try {
+    const db = getDb();
+    db.prepare('UPDATE stocks SET alert_triggered = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(req.params.id);
+    res.json({ success: true, message: '预警已重置' });
+  } catch (error) {
+    console.error('[API] Alert reset error:', error);
+    res.status(500).json({ success: false, error: '重置预警失败' });
   }
 });
 
@@ -823,7 +848,7 @@ app.delete('/api/stocks/:id', (req, res) => {
 app.post('/api/stocks/refresh', async (req, res) => {
   try {
     const db = getDb();
-    const stocks = db.prepare('SELECT id, code, market, highest_price, lowest_price, added_price FROM stocks WHERE is_active = 1').all();
+    const stocks = db.prepare('SELECT id, code, market, highest_price, lowest_price, added_price, change_percent, alert_threshold, alert_direction, alert_triggered FROM stocks WHERE is_active = 1').all();
 
     if (stocks.length === 0) {
       return res.json({ success: true, message: '没有需要更新的股票' });
@@ -840,6 +865,7 @@ app.post('/api/stocks/refresh', async (req, res) => {
           max_drawdown = ?,
           change_percent = ?,
           daily_change = ?,
+          alert_triggered = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `);
@@ -876,6 +902,17 @@ app.post('/api/stocks/refresh', async (req, res) => {
           ? parseFloat(((currentPrice - stock.added_price) / stock.added_price * 100).toFixed(2))
           : 0;
 
+        // Check alert threshold
+        let alertTriggered = stock.alert_triggered || 0;
+        if (stock.alert_threshold !== null && !alertTriggered) {
+          const threshold = parseFloat(stock.alert_threshold);
+          if (stock.alert_direction === 'down' && changeFromAdded <= threshold) {
+            alertTriggered = 1;
+          } else if (stock.alert_direction === 'up' && changeFromAdded >= threshold) {
+            alertTriggered = 1;
+          }
+        }
+
         updates.push({
           stockParams: [
             currentPrice,
@@ -884,6 +921,7 @@ app.post('/api/stocks/refresh', async (req, res) => {
             maxDrawdown,
             changeFromAdded,
             data.changePercent || 0,
+            alertTriggered,
             stock.id,
           ],
           priceParams: [
@@ -920,7 +958,7 @@ app.get('/api/stocks/refresh-prices', async (req, res) => {
   // This endpoint is called by the scheduler
   try {
     const db = getDb();
-    const stocks = db.prepare('SELECT id, code, market, highest_price, lowest_price, added_price FROM stocks WHERE is_active = 1').all();
+    const stocks = db.prepare('SELECT id, code, market, highest_price, lowest_price, added_price, change_percent, alert_threshold, alert_direction, alert_triggered FROM stocks WHERE is_active = 1').all();
 
     if (stocks.length === 0) {
       return res.status(200).end('ok');
@@ -936,6 +974,7 @@ app.get('/api/stocks/refresh-prices', async (req, res) => {
           max_drawdown = ?,
           change_percent = ?,
           daily_change = ?,
+          alert_triggered = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `);
@@ -968,10 +1007,21 @@ app.get('/api/stocks/refresh-prices', async (req, res) => {
           ? parseFloat(((currentPrice - stock.added_price) / stock.added_price * 100).toFixed(2))
           : 0;
 
+        // Check alert threshold
+        let alertTriggered = stock.alert_triggered || 0;
+        if (stock.alert_threshold !== null && !alertTriggered) {
+          const threshold = parseFloat(stock.alert_threshold);
+          if (stock.alert_direction === 'down' && changeFromAdded <= threshold) {
+            alertTriggered = 1;
+          } else if (stock.alert_direction === 'up' && changeFromAdded >= threshold) {
+            alertTriggered = 1;
+          }
+        }
+
         updates.push({
           stockParams: [
             currentPrice, highestPrice, lowestPrice, maxDrawdown,
-            changeFromAdded, stock.id,
+            changeFromAdded, data.changePercent || 0, alertTriggered, stock.id,
           ],
           priceParams: [
             stock.id, currentPrice, data.high || currentPrice,
@@ -1019,7 +1069,7 @@ setInterval(async () => {
   console.log(`[${new Date().toLocaleTimeString()}] 自动更新股票价格...`);
   try {
     const db = getDb();
-    const stocks = db.prepare('SELECT id, code, market, highest_price, lowest_price, added_price FROM stocks WHERE is_active = 1').all();
+    const stocks = db.prepare('SELECT id, code, market, highest_price, lowest_price, added_price, change_percent, alert_threshold, alert_direction, alert_triggered FROM stocks WHERE is_active = 1').all();
 
     if (stocks.length === 0) return;
 
@@ -1033,6 +1083,7 @@ setInterval(async () => {
           max_drawdown = ?,
           change_percent = ?,
           daily_change = ?,
+          alert_triggered = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `);
@@ -1057,8 +1108,16 @@ setInterval(async () => {
           ? parseFloat(((currentPrice - stock.added_price) / stock.added_price * 100).toFixed(2))
           : 0;
 
+        // Check alert
+        let alertTriggered = stock.alert_triggered || 0;
+        if (stock.alert_threshold !== null && !alertTriggered) {
+          const t = parseFloat(stock.alert_threshold);
+          if (stock.alert_direction === 'down' && changeFromAdded <= t) alertTriggered = 1;
+          else if (stock.alert_direction === 'up' && changeFromAdded >= t) alertTriggered = 1;
+        }
+
         updateStmt.run(currentPrice, highestPrice, lowestPrice, maxDrawdown,
-          changeFromAdded, data.changePercent || 0, stock.id);
+          changeFromAdded, data.changePercent || 0, alertTriggered, stock.id);
         insertPriceStmt.run(stock.id, currentPrice, data.high || currentPrice,
           data.low || currentPrice, changeFromAdded);
       }

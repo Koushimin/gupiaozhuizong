@@ -414,6 +414,31 @@
     .stock-tag.止盈 { background: rgba(236, 72, 153, 0.15); color: #ec4899; }
     .stock-tag.止损 { background: rgba(100, 116, 139, 0.2); color: #64748b; }
 
+    /* Alert blinking animation */
+    @keyframes alertBlink {
+      0%, 100% { box-shadow: 0 0 8px rgba(239, 68, 68, 0.3); }
+      50% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.8), 0 0 40px rgba(239, 68, 68, 0.3); }
+    }
+    .alert-triggered {
+      animation: alertBlink 1.5s ease-in-out infinite;
+    }
+    .alert-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 0.65rem;
+      font-weight: 600;
+      background: rgba(239, 68, 68, 0.15);
+      color: #ef4444;
+      animation: alertBlink 1.5s ease-in-out infinite;
+    }
+    .ticker-item.alert-triggered {
+      background: rgba(239, 68, 68, 0.1);
+      border-radius: 8px;
+    }
+
     /* Glass card deco line */
     .glass-card .deco-line {
       position: absolute;
@@ -925,10 +950,7 @@
       .table-view .td-name {
         max-width: 120px;
       }
-      .table-stock-code {
-        display: none;
-      }
-      .td-reason-col {
+      .table-stock-code, .td-since, .td-reason-col {
         display: none;
       }
       .table-view .td-actions button {
@@ -1141,7 +1163,7 @@
     <div x-show="!loading && stocks.length > 0" class="ticker-container">
       <div class="ticker-track">
         <template x-for="stock in sortedStocks" :key="'t-'+stock.id">
-          <div class="ticker-item" @click="openDetail(stock)">
+          <div class="ticker-item" :class="stock.alert_triggered ? 'alert-triggered' : ''" @click="openDetail(stock)">
             <span class="ticker-name" x-text="stock.name"></span>
             <span x-show="stock.tag" class="stock-tag" :class="stock.tag" x-text="stock.tag"></span>
             <span class="ticker-price" x-text="formatPrice(stock.current_price)"></span>
@@ -1149,13 +1171,34 @@
             <span class="ticker-sep"></span>
           </div>
         </template>
-        <!-- Duplicate for seamless loop -->
         <template x-for="stock in sortedStocks" :key="'t2-'+stock.id">
-          <div class="ticker-item" @click="openDetail(stock)">
+          <div class="ticker-item" :class="stock.alert_triggered ? 'alert-triggered' : ''" @click="openDetail(stock)">
             <span class="ticker-name" x-text="stock.name"></span>
             <span x-show="stock.tag" class="stock-tag" :class="stock.tag" x-text="stock.tag"></span>
             <span class="ticker-price" x-text="formatPrice(stock.current_price)"></span>
             <span class="ticker-change" :class="(stock.daily_change || 0) >= 0 ? 'up' : 'down'" x-text="formatPercent(stock.daily_change)"></span>
+            <span class="ticker-sep"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Notes Scrolling Ticker (stocks with personal notes) -->
+    <div x-show="!loading && stocksWithNotes.length > 0" class="ticker-container" style="padding:6px 0;margin-bottom:10px;">
+      <div class="ticker-track" style="animation-duration:40s;">
+        <template x-for="stock in stocksWithNotes" :key="'n-'+stock.id">
+          <div class="ticker-item" @click="openDetail(stock)">
+            <span style="font-size:0.75rem;opacity:0.6;">📝</span>
+            <span class="ticker-name" style="font-size:0.8rem;" x-text="stock.name"></span>
+            <span style="font-size:0.8rem;color:#f59e0b;max-width:180px;overflow:hidden;text-overflow:ellipsis;" x-text="'📌 ' + stock.notes_sub"></span>
+            <span class="ticker-sep"></span>
+          </div>
+        </template>
+        <template x-for="stock in stocksWithNotes" :key="'n2-'+stock.id">
+          <div class="ticker-item" @click="openDetail(stock)">
+            <span style="font-size:0.75rem;opacity:0.6;">📝</span>
+            <span class="ticker-name" style="font-size:0.8rem;" x-text="stock.name"></span>
+            <span style="font-size:0.8rem;color:#f59e0b;max-width:180px;overflow:hidden;text-overflow:ellipsis;" x-text="'📌 ' + stock.notes_sub"></span>
             <span class="ticker-sep"></span>
           </div>
         </template>
@@ -1170,10 +1213,12 @@
         <div>
           <!-- Header -->
           <div class="flex items-center justify-between mb-4">
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
               <span class="text-xl font-bold" x-text="detailStock.name"></span>
+              <span x-show="detailStock.tag" class="stock-tag" :class="detailStock.tag" x-text="detailStock.tag"></span>
               <span class="market-tag" :class="'market-' + detailStock.market" x-text="detailStock.market.toUpperCase()"></span>
               <span class="stat-label text-sm" x-text="detailStock.code"></span>
+              <span x-show="detailStock.alert_triggered" class="alert-badge">⚠️ 预警</span>
             </div>
             <button @click="closeDetail()" class="text-2xl opacity-40 hover:opacity-70">✕</button>
           </div>
@@ -1208,6 +1253,16 @@
               </p>
             </div>
             <div class="glass-card !p-4" style="border-radius:12px;">
+              <p class="text-xs stat-label mb-1">⚠️ 预警阈值</p>
+              <p class="font-semibold text-sm">
+                <span x-show="detailStock.alert_threshold !== null && detailStock.alert_threshold !== undefined && detailStock.alert_threshold !== ''"
+                      :class="detailStock.alert_triggered ? 'alert-badge' : ''"
+                      x-text="(detailStock.alert_direction === 'up' ? '涨超 ' : '跌超 ') + detailStock.alert_threshold + '%'"></span>
+                <span x-show="detailStock.alert_threshold === null || detailStock.alert_threshold === undefined || detailStock.alert_threshold === ''"
+                      class="opacity-40">未设置</span>
+              </p>
+            </div>
+            <div class="glass-card !p-4" style="border-radius:12px;">
               <p class="text-xs stat-label mb-1">📊 分类</p>
               <p class="font-semibold text-sm" x-text="getCategoryName(detailStock.category_id) || '未分类'" 
                  :style="getCategoryName(detailStock.category_id) ? 'color:' + getCategoryColor(detailStock.category_id) : ''"></p>
@@ -1231,6 +1286,13 @@
             <p class="text-xs stat-label mb-1">📝 备注</p>
             <p class="text-sm notes-text leading-relaxed" x-text="detailStock.notes"></p>
           </div>
+          <!-- Alert Reset -->
+          <div x-show="detailStock.alert_triggered" class="mt-3 text-center">
+            <button @click="resetAlert(detailStock.id); closeDetail();" class="btn-secondary text-sm py-2 px-4">
+              复位预警 ✓
+            </button>
+          </div>
+        </div>
         </div>
       </template>
     </div>
@@ -1329,7 +1391,8 @@
             </thead>
             <tbody>
               <template x-for="stock in sortedStocks" :key="stock.id">
-                <tr class="table-row" :class="(stock.change_percent || 0) > 5 ? 'profit-glow' : (stock.change_percent || 0) < -5 ? 'loss-glow' : ''">
+                <tr class="table-row" :class="(stock.change_percent || 0) > 5 ? 'profit-glow' : (stock.change_percent || 0) < -5 ? 'loss-glow' : ''"
+                    @click="openDetail(stock)" style="cursor:pointer;">
                   <td class="td-name">
                     <div class="flex items-center gap-2">
                       <div>
@@ -1777,6 +1840,31 @@
               </div>
             </div>
 
+            <!-- Edit: Alert -->
+            <div>
+              <label class="block text-sm font-medium mb-2 stat-label">⚠️ 价格预警</label>
+              <div class="flex items-center gap-3">
+                <select x-model="editForm.alert_direction" class="input-field" style="padding:10px 12px;width:auto;flex-shrink:0;">
+                  <option value="down">跌超</option>
+                  <option value="up">涨超</option>
+                </select>
+                <input type="number" x-model="editForm.alert_threshold" step="0.1"
+                       placeholder="百分比 %" class="input-field" style="padding:10px 12px;width:100px;">
+                <button @click="editForm.alert_threshold = null; editForm.alert_direction = 'down'"
+                        class="btn-danger text-xs py-1.5 px-3" style="flex-shrink:0;">清除</button>
+              </div>
+              <p class="text-xs stat-label mt-1">
+                <span x-show="editForm.alert_threshold !== null && editForm.alert_threshold !== ''">
+                  当加入至今涨幅 <span x-text="editForm.alert_direction === 'down' ? '≤' : '≥'"></span> <b x-text="editForm.alert_threshold + '%'"></b> 时触发预警
+                </span>
+                <span x-show="editForm.alert_threshold === null || editForm.alert_threshold === ''">未设置价格预警</span>
+              </p>
+              <div x-show="editingStock?.alert_triggered" class="mt-1">
+                <span class="alert-badge">⚠️ 预警已触发</span>
+                <button @click="resetAlert(editingStock.id)" class="text-xs text-indigo-400 ml-2">复位预警</button>
+              </div>
+            </div>
+
             <!-- Edit: Category -->
             <div>
               <label class="block text-sm font-medium mb-2 stat-label">所属分类</label>
@@ -2181,6 +2269,8 @@
             reason: stock.reason || '',
             notes: stock.notes || '',
             tag: stock.tag || '',
+            alert_threshold: stock.alert_threshold,
+            alert_direction: stock.alert_direction || 'down',
             category_id: stock.category_id || null,
           };
           document.body.style.overflow = 'hidden';
@@ -2205,6 +2295,8 @@
                 reason: this.editForm.reason.trim(),
                 notes: this.editForm.notes.trim(),
                 tag: this.editForm.tag,
+                alert_threshold: this.editForm.alert_threshold,
+                alert_direction: this.editForm.alert_direction,
               }),
             });
             const json = await res.json();
@@ -2226,22 +2318,48 @@
           }
         },
 
+        async resetAlert(stockId) {
+          try {
+            const res = await fetch(`/api/stocks/${stockId}/alert-reset`, { method: 'POST' });
+            const json = await res.json();
+            if (json.success) {
+              this.showToast('预警已复位', 'success');
+              await this.loadStocks();
+              if (this.editingStock) this.editingStock.alert_triggered = 0;
+            }
+          } catch (e) {
+            this.showToast('复位失败', 'error');
+          }
+        },
+
         // ===== Sort =====
 
         get sortedStocks() {
+          // Triggered alerts always on top
           const s = [...this.stocks];
-          if (this.sortBy === 'time') {
-            s.sort((a, b) => {
+          s.sort((a, b) => {
+            // Alert triggered stocks go first
+            if ((a.alert_triggered || 0) !== (b.alert_triggered || 0)) {
+              return (b.alert_triggered || 0) - (a.alert_triggered || 0);
+            }
+            // Then sort by selected field
+            if (this.sortBy === 'time') {
               const diff = (a.created_at || '') < (b.created_at || '') ? 1 : -1;
               return this.sortAsc ? -diff : diff;
-            });
-          } else if (this.sortBy === 'return') {
-            s.sort((a, b) => {
+            } else if (this.sortBy === 'return') {
               const diff = (b.change_percent || 0) - (a.change_percent || 0);
               return this.sortAsc ? -diff : diff;
-            });
-          }
+            }
+            return 0;
+          });
           return s;
+        },
+
+        get stocksWithNotes() {
+          return this.stocks.filter(s => s.notes && s.notes.trim().length > 0).map(s => ({
+            ...s,
+            notes_sub: s.notes.length > 30 ? s.notes.substring(0, 30) + '...' : s.notes,
+          }));
         },
 
         toggleSort(field) {
