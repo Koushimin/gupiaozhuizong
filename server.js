@@ -595,7 +595,7 @@ app.put('/api/stocks/:id', (req, res) => {
       return res.status(404).json({ success: false, error: '股票不存在' });
     }
 
-    const { name, reason, notes, tag, alert_threshold, alert_direction } = req.body;
+    const { name, reason, notes, tag, alert_threshold, alert_type, alert_direction } = req.body;
     const updateFields = [];
     const updateParams = [];
 
@@ -624,6 +624,10 @@ app.put('/api/stocks/:id', (req, res) => {
     if (alert_direction !== undefined) {
       updateFields.push('alert_direction = ?');
       updateParams.push(alert_direction);
+    }
+    if (alert_type !== undefined) {
+      updateFields.push('alert_type = ?');
+      updateParams.push(alert_type);
     }
 
     if (updateFields.length === 0) {
@@ -848,7 +852,7 @@ app.delete('/api/stocks/:id', (req, res) => {
 app.post('/api/stocks/refresh', async (req, res) => {
   try {
     const db = getDb();
-    const stocks = db.prepare('SELECT id, code, market, highest_price, lowest_price, added_price, change_percent, alert_threshold, alert_direction, alert_triggered FROM stocks WHERE is_active = 1').all();
+    const stocks = db.prepare('SELECT id, code, market, highest_price, lowest_price, added_price, change_percent, alert_threshold, alert_type, alert_direction, alert_triggered FROM stocks WHERE is_active = 1').all();
 
     if (stocks.length === 0) {
       return res.json({ success: true, message: '没有需要更新的股票' });
@@ -902,14 +906,25 @@ app.post('/api/stocks/refresh', async (req, res) => {
           ? parseFloat(((currentPrice - stock.added_price) / stock.added_price * 100).toFixed(2))
           : 0;
 
-        // Check alert threshold
+        // Check alert threshold (percent or price based)
         let alertTriggered = stock.alert_triggered || 0;
         if (stock.alert_threshold !== null && !alertTriggered) {
           const threshold = parseFloat(stock.alert_threshold);
-          if (stock.alert_direction === 'down' && changeFromAdded <= threshold) {
-            alertTriggered = 1;
-          } else if (stock.alert_direction === 'up' && changeFromAdded >= threshold) {
-            alertTriggered = 1;
+          const isPriceType = stock.alert_type === 'price';
+          if (isPriceType) {
+            // Price-based: compare current price to threshold price
+            if (stock.alert_direction === 'down' && currentPrice <= threshold) {
+              alertTriggered = 1;
+            } else if (stock.alert_direction === 'up' && currentPrice >= threshold) {
+              alertTriggered = 1;
+            }
+          } else {
+            // Percentage-based: compare change from added price
+            if (stock.alert_direction === 'down' && changeFromAdded <= threshold) {
+              alertTriggered = 1;
+            } else if (stock.alert_direction === 'up' && changeFromAdded >= threshold) {
+              alertTriggered = 1;
+            }
           }
         }
 
@@ -958,7 +973,7 @@ app.get('/api/stocks/refresh-prices', async (req, res) => {
   // This endpoint is called by the scheduler
   try {
     const db = getDb();
-    const stocks = db.prepare('SELECT id, code, market, highest_price, lowest_price, added_price, change_percent, alert_threshold, alert_direction, alert_triggered FROM stocks WHERE is_active = 1').all();
+    const stocks = db.prepare('SELECT id, code, market, highest_price, lowest_price, added_price, change_percent, alert_threshold, alert_type, alert_direction, alert_triggered FROM stocks WHERE is_active = 1').all();
 
     if (stocks.length === 0) {
       return res.status(200).end('ok');
@@ -1007,14 +1022,25 @@ app.get('/api/stocks/refresh-prices', async (req, res) => {
           ? parseFloat(((currentPrice - stock.added_price) / stock.added_price * 100).toFixed(2))
           : 0;
 
-        // Check alert threshold
+        // Check alert threshold (percent or price based)
         let alertTriggered = stock.alert_triggered || 0;
         if (stock.alert_threshold !== null && !alertTriggered) {
           const threshold = parseFloat(stock.alert_threshold);
-          if (stock.alert_direction === 'down' && changeFromAdded <= threshold) {
-            alertTriggered = 1;
-          } else if (stock.alert_direction === 'up' && changeFromAdded >= threshold) {
-            alertTriggered = 1;
+          const isPriceType = stock.alert_type === 'price';
+          if (isPriceType) {
+            // Price-based: compare current price to threshold price
+            if (stock.alert_direction === 'down' && currentPrice <= threshold) {
+              alertTriggered = 1;
+            } else if (stock.alert_direction === 'up' && currentPrice >= threshold) {
+              alertTriggered = 1;
+            }
+          } else {
+            // Percentage-based: compare change from added price
+            if (stock.alert_direction === 'down' && changeFromAdded <= threshold) {
+              alertTriggered = 1;
+            } else if (stock.alert_direction === 'up' && changeFromAdded >= threshold) {
+              alertTriggered = 1;
+            }
           }
         }
 
@@ -1069,7 +1095,7 @@ setInterval(async () => {
   console.log(`[${new Date().toLocaleTimeString()}] 自动更新股票价格...`);
   try {
     const db = getDb();
-    const stocks = db.prepare('SELECT id, code, market, highest_price, lowest_price, added_price, change_percent, alert_threshold, alert_direction, alert_triggered FROM stocks WHERE is_active = 1').all();
+    const stocks = db.prepare('SELECT id, code, market, highest_price, lowest_price, added_price, change_percent, alert_threshold, alert_type, alert_direction, alert_triggered FROM stocks WHERE is_active = 1').all();
 
     if (stocks.length === 0) return;
 

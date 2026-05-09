@@ -1256,8 +1256,14 @@
               <p class="text-xs stat-label mb-1">⚠️ 预警阈值</p>
               <p class="font-semibold text-sm">
                 <span x-show="detailStock.alert_threshold !== null && detailStock.alert_threshold !== undefined && detailStock.alert_threshold !== ''"
-                      :class="detailStock.alert_triggered ? 'alert-badge' : ''"
-                      x-text="(detailStock.alert_direction === 'up' ? '涨超 ' : '跌超 ') + detailStock.alert_threshold + '%'"></span>
+                      :class="detailStock.alert_triggered ? 'alert-badge' : ''">
+                  <template x-if="detailStock.alert_type === 'price'">
+                    <span x-text="(detailStock.alert_direction === 'up' ? '涨至 ¥' : '跌至 ¥') + parseFloat(detailStock.alert_threshold).toFixed(2)"></span>
+                  </template>
+                  <template x-if="detailStock.alert_type !== 'price'">
+                    <span x-text="(detailStock.alert_direction === 'up' ? '涨超 ' : '跌超 ') + detailStock.alert_threshold + '%'"></span>
+                  </template>
+                </span>
                 <span x-show="detailStock.alert_threshold === null || detailStock.alert_threshold === undefined || detailStock.alert_threshold === ''"
                       class="opacity-40">未设置</span>
               </p>
@@ -1844,18 +1850,22 @@
             <div>
               <label class="block text-sm font-medium mb-2 stat-label">⚠️ 价格预警</label>
               <div class="flex items-center gap-3">
-                <select x-model="editForm.alert_direction" class="input-field" style="padding:10px 12px;width:auto;flex-shrink:0;">
-                  <option value="down">跌超</option>
-                  <option value="up">涨超</option>
+                <select x-model="editForm.alert_mode" class="input-field" style="padding:10px 12px;width:auto;flex-shrink:0;">
+                  <option value="percent-down">📉 跌超 %</option>
+                  <option value="percent-up">📈 涨超 %</option>
+                  <option value="price-down">📉 跌至 ¥</option>
+                  <option value="price-up">📈 涨至 ¥</option>
                 </select>
-                <input type="number" x-model="editForm.alert_threshold" step="0.1"
-                       placeholder="百分比 %" class="input-field" style="padding:10px 12px;width:100px;">
-                <button @click="editForm.alert_threshold = null; editForm.alert_direction = 'down'"
+                <input type="number" x-model="editForm.alert_threshold" :step="editForm.alert_mode?.startsWith('price') ? '0.01' : '0.1'"
+                       :placeholder="editForm.alert_mode?.startsWith('price') ? '目标价' : '百分比'" class="input-field" style="padding:10px 12px;width:110px;">
+                <button @click="editForm.alert_threshold = null; editForm.alert_mode = 'percent-down'"
                         class="btn-danger text-xs py-1.5 px-3" style="flex-shrink:0;">清除</button>
               </div>
               <p class="text-xs stat-label mt-1">
                 <span x-show="editForm.alert_threshold !== null && editForm.alert_threshold !== ''">
-                  当加入至今涨幅 <span x-text="editForm.alert_direction === 'down' ? '≤' : '≥'"></span> <b x-text="editForm.alert_threshold + '%'"></b> 时触发预警
+                  当 <span x-text="editForm.alert_mode === 'percent-down' || editForm.alert_mode === 'percent-up' ? '加入至今涨幅' : '当前价格'"></span>
+                  <span x-text="editForm.alert_mode === 'percent-down' || editForm.alert_mode === 'price-down' ? '≤' : '≥'"></span>
+                  <b x-text="editForm.alert_threshold + (editForm.alert_mode?.startsWith('price') ? '' : '%')"></b> 时触发预警
                 </span>
                 <span x-show="editForm.alert_threshold === null || editForm.alert_threshold === ''">未设置价格预警</span>
               </p>
@@ -2264,13 +2274,16 @@
         openEditModal(stock) {
           this.showEditModal = true;
           this.editingStock = { ...stock };
+          // Derive alert_mode from alert_type + alert_direction
+          const at = (stock.alert_type || 'percent');
+          const ad = (stock.alert_direction || 'down');
           this.editForm = {
             name: stock.name || '',
             reason: stock.reason || '',
             notes: stock.notes || '',
             tag: stock.tag || '',
             alert_threshold: stock.alert_threshold,
-            alert_direction: stock.alert_direction || 'down',
+            alert_mode: at + '-' + ad,
             category_id: stock.category_id || null,
           };
           document.body.style.overflow = 'hidden';
@@ -2296,7 +2309,9 @@
                 notes: this.editForm.notes.trim(),
                 tag: this.editForm.tag,
                 alert_threshold: this.editForm.alert_threshold,
-                alert_direction: this.editForm.alert_direction,
+                // Derive alert_type and alert_direction from alert_mode
+                alert_type: this.editForm.alert_mode?.split('-')[0] || 'percent',
+                alert_direction: this.editForm.alert_mode?.split('-')[1] || 'down',
               }),
             });
             const json = await res.json();
