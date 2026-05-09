@@ -1,0 +1,13 @@
+[build]
+builder = "nixpacks"
+
+[build.environment]
+NIXPACKS_PKGS = "python3 gcc gcc-c++ make"
+npm_FLAGS = "--build-from-source"
+
+[deploy]
+startCommand = "node server.js"
+
+[deploy.environment]
+PORT = "$PORT"
+NODE_ENV = "production"
