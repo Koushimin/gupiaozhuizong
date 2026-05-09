@@ -595,7 +595,7 @@ app.put('/api/stocks/:id', (req, res) => {
       return res.status(404).json({ success: false, error: '股票不存在' });
     }
 
-    const { name, reason, notes } = req.body;
+    const { name, reason, notes, tag } = req.body;
     const updateFields = [];
     const updateParams = [];
 
@@ -610,6 +610,10 @@ app.put('/api/stocks/:id', (req, res) => {
     if (notes !== undefined) {
       updateFields.push('notes = ?');
       updateParams.push(notes.trim());
+    }
+    if (tag !== undefined) {
+      updateFields.push('tag = ?');
+      updateParams.push(tag);
     }
 
     if (updateFields.length === 0) {

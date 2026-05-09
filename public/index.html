@@ -393,6 +393,27 @@
     .market-sz { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
     .market-bj { background: rgba(234, 179, 8, 0.15); color: #eab308; }
 
+    /* Stock Tag/Label */
+    .stock-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 8px;
+      border-radius: 4px;
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      white-space: nowrap;
+      line-height: 1.6;
+      flex-shrink: 0;
+    }
+    .stock-tag.关注 { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+    .stock-tag.持仓 { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+    .stock-tag.观察 { background: rgba(234, 179, 8, 0.15); color: #eab308; }
+    .stock-tag.卖出 { background: rgba(249, 115, 22, 0.15); color: #f97316; }
+    .stock-tag.清仓 { background: rgba(148, 163, 184, 0.2); color: #94a3b8; }
+    .stock-tag.止盈 { background: rgba(236, 72, 153, 0.15); color: #ec4899; }
+    .stock-tag.止损 { background: rgba(100, 116, 139, 0.2); color: #64748b; }
+
     /* Glass card deco line */
     .glass-card .deco-line {
       position: absolute;
@@ -1122,6 +1143,7 @@
         <template x-for="stock in sortedStocks" :key="'t-'+stock.id">
           <div class="ticker-item" @click="openDetail(stock)">
             <span class="ticker-name" x-text="stock.name"></span>
+            <span x-show="stock.tag" class="stock-tag" :class="stock.tag" x-text="stock.tag"></span>
             <span class="ticker-price" x-text="formatPrice(stock.current_price)"></span>
             <span class="ticker-change" :class="(stock.daily_change || 0) >= 0 ? 'up' : 'down'" x-text="formatPercent(stock.daily_change)"></span>
             <span class="ticker-sep"></span>
@@ -1131,6 +1153,7 @@
         <template x-for="stock in sortedStocks" :key="'t2-'+stock.id">
           <div class="ticker-item" @click="openDetail(stock)">
             <span class="ticker-name" x-text="stock.name"></span>
+            <span x-show="stock.tag" class="stock-tag" :class="stock.tag" x-text="stock.tag"></span>
             <span class="ticker-price" x-text="formatPrice(stock.current_price)"></span>
             <span class="ticker-change" :class="(stock.daily_change || 0) >= 0 ? 'up' : 'down'" x-text="formatPercent(stock.daily_change)"></span>
             <span class="ticker-sep"></span>
@@ -1176,6 +1199,13 @@
               <p class="text-xs stat-label mb-1">📈 加入至今涨幅</p>
               <p class="font-semibold text-sm" :class="detailStock.change_percent >= 0 ? 'price-up' : 'price-down'"
                  x-text="formatPercent(detailStock.change_percent)"></p>
+            </div>
+            <div class="glass-card !p-4" style="border-radius:12px;">
+              <p class="text-xs stat-label mb-1">🏷️ 标签</p>
+              <p class="font-semibold text-sm">
+                <span x-show="detailStock.tag" class="stock-tag" :class="detailStock.tag" x-text="detailStock.tag"></span>
+                <span x-show="!detailStock.tag" class="opacity-40">—</span>
+              </p>
             </div>
             <div class="glass-card !p-4" style="border-radius:12px;">
               <p class="text-xs stat-label mb-1">📊 分类</p>
@@ -1307,6 +1337,7 @@
                         <span class="stock-code text-xs opacity-60" x-text="stock.code"></span>
                       </div>
                       <span class="market-tag text-xs flex-shrink-0" :class="'market-' + stock.market" x-text="stock.market.toUpperCase()"></span>
+                      <span x-show="stock.tag" class="stock-tag" :class="stock.tag" x-text="stock.tag"></span>
                     </div>
                   </td>
                   <td class="td-price text-right whitespace-nowrap">
@@ -1364,6 +1395,7 @@
                         <div class="flex items-center gap-1.5">
                           <span class="stock-name font-bold truncate compact-stock-name" x-text="stock.name"></span>
                           <span class="market-tag text-xs flex-shrink-0" :class="'market-' + stock.market" x-text="stock.market.toUpperCase()"></span>
+                          <span x-show="stock.tag" class="stock-tag" :class="stock.tag" x-text="stock.tag"></span>
                         </div>
                         <p class="text-xs stat-label truncate" x-text="stock.code"></p>
                       </div>
@@ -1437,6 +1469,7 @@
                         <div class="flex items-center gap-1.5 mb-0.5">
                           <h3 class="text-lg font-bold truncate" x-text="stock.name"></h3>
                           <span class="market-tag flex-shrink-0" :class="'market-' + stock.market" x-text="stock.market.toUpperCase()"></span>
+                          <span x-show="stock.tag" class="stock-tag" :class="stock.tag" x-text="stock.tag"></span>
                         </div>
                         <p class="text-sm stat-label flex items-center gap-2">
                           <span x-text="stock.code"></span>
@@ -1730,6 +1763,20 @@
                         class="input-field resize-none"></textarea>
             </div>
 
+            <!-- Edit: Tag -->
+            <div>
+              <label class="block text-sm font-medium mb-2 stat-label">标签标注</label>
+              <div class="flex gap-2 flex-wrap">
+                <template x-for="t in stockTags" :key="t.value">
+                  <button @click="editForm.tag = editForm.tag === t.value ? '' : t.value"
+                          class="stock-tag text-xs px-3 py-1.5 rounded-md cursor-pointer transition-all"
+                          :class="[t.value, editForm.tag === t.value ? 'ring-2 ring-offset-1 ring-indigo-500' : 'opacity-60 hover:opacity-100']"
+                          x-text="t.label"
+                          style="font-size:0.8rem;border:none;"></button>
+                </template>
+              </div>
+            </div>
+
             <!-- Edit: Category -->
             <div>
               <label class="block text-sm font-medium mb-2 stat-label">所属分类</label>
@@ -1855,6 +1902,16 @@
         categoryExpanded: {},
         categoryPickerFor: null,
         newStockCategoryId: '',
+
+        stockTags: [
+          { value: '关注', label: '🔥 重点关注' },
+          { value: '持仓', label: '💎 持仓中' },
+          { value: '观察', label: '👀 观察中' },
+          { value: '卖出', label: '⚠️ 考虑卖出' },
+          { value: '止盈', label: '✅ 已止盈' },
+          { value: '止损', label: '🛑 已止损' },
+          { value: '清仓', label: '⚪ 已清仓' },
+        ],
 
         // Edit Modal
         showEditModal: false,
@@ -2123,6 +2180,7 @@
             name: stock.name || '',
             reason: stock.reason || '',
             notes: stock.notes || '',
+            tag: stock.tag || '',
             category_id: stock.category_id || null,
           };
           document.body.style.overflow = 'hidden';
@@ -2146,6 +2204,7 @@
                 name: this.editForm.name.trim(),
                 reason: this.editForm.reason.trim(),
                 notes: this.editForm.notes.trim(),
+                tag: this.editForm.tag,
               }),
             });
             const json = await res.json();

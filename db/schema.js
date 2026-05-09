@@ -41,6 +41,7 @@ function initSchema() {
       category_id INTEGER DEFAULT NULL,
       reason TEXT,
       notes TEXT DEFAULT '',
+      tag TEXT DEFAULT '',
       added_price REAL NOT NULL,
       current_price REAL,
       highest_price REAL,
@@ -92,6 +93,7 @@ function initSchema() {
   try { db.exec("ALTER TABLE stocks ADD COLUMN daily_change REAL DEFAULT 0"); } catch(e) {}
   try { db.exec("ALTER TABLE stocks ADD COLUMN category_id INTEGER DEFAULT NULL"); } catch(e) {}
   try { db.exec("ALTER TABLE stocks ADD COLUMN notes TEXT DEFAULT ''"); } catch(e) {}
+  try { db.exec("ALTER TABLE stocks ADD COLUMN tag TEXT DEFAULT ''"); } catch(e) {}
 
   // Migrate existing stocks: set join_date from created_at if empty
   try {
