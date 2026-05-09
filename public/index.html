@@ -1086,6 +1086,25 @@
             <span :class="tunnelUrl ? '' : 'opacity-50'">🌐</span>
             <span class="hidden sm:inline" x-text="tunnelUrl ? '已分享' : '对外分享'"></span>
           </button>
+          <!-- Import/Export -->
+          <div class="relative" x-data="{ open: false }">
+            <button @click="open = !open" class="btn-secondary flex items-center gap-1.5 text-sm py-2 px-3" title="数据导入导出">
+              <span>💾</span>
+              <span class="hidden sm:inline">数据</span>
+            </button>
+            <div x-show="open" @click.away="open = false"
+                 class="category-picker" style="right:0;top:100%;margin-top:4px;min-width:160px;">
+              <div @click="open = false; exportData()" class="category-option">
+                <span>📤</span>
+                <span>导出数据 (JSON)</span>
+              </div>
+              <div @click="open = false; document.getElementById('importFileInput').click()" class="category-option">
+                <span>📥</span>
+                <span>导入数据 (JSON)</span>
+              </div>
+            </div>
+            <input type="file" id="importFileInput" accept=".json" @change="importData($event)" style="display:none;">
+          </div>
           <button @click="refreshAll()" :disabled="isRefreshing" class="btn-secondary flex items-center gap-1.5 text-sm py-2 px-3">
             <span x-show="isRefreshing" class="spinner" style="width:16px;height:16px;"></span>
             <span x-show="!isRefreshing">🔄</span>
@@ -1144,6 +1163,14 @@
       <button @click="toggleTunnel(); mobileMenuOpen = false" class="mobile-menu-item">
         <span>🌐</span>
         <span x-text="tunnelUrl ? '复制分享链接' : '对外分享'"></span>
+      </button>
+      <button @click="mobileMenuOpen = false; exportData()" class="mobile-menu-item">
+        <span>📤</span>
+        <span>导出数据</span>
+      </button>
+      <button @click="mobileMenuOpen = false; document.getElementById('importFileInput').click()" class="mobile-menu-item">
+        <span>📥</span>
+        <span>导入数据</span>
       </button>
       <button @click="refreshAll(); mobileMenuOpen = false" class="mobile-menu-item" :disabled="isRefreshing">
         <span>🔄</span>
@@ -2440,6 +2467,65 @@
             console.error('Failed to load stocks:', e);
           } finally {
             this.loading = false;
+          }
+        },
+
+        // ===== Import / Export =====
+
+        async exportData() {
+          try {
+            const res = await fetch('/api/export');
+            const json = await res.json();
+            if (json.success) {
+              const blob = new Blob([JSON.stringify(json.data, null, 2)], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `stock-tracker-backup-${new Date().toISOString().split('T')[0]}.json`;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+              this.showToast(`导出成功: ${json.data.stocks.length} 只股票`, 'success');
+            } else {
+              this.showToast('导出失败', 'error');
+            }
+          } catch (e) {
+            this.showToast('导出失败: ' + e.message, 'error');
+          }
+        },
+
+        async importData(event) {
+          const file = event.target.files[0];
+          if (!file) return;
+          
+          if (!confirm('⚠️ 导入将覆盖所有现有数据！\n\n当前的所有股票、分类、研报、价格记录都将被替换为导入文件中的数据。\n确定继续吗？')) {
+            event.target.value = '';
+            return;
+          }
+
+          try {
+            const text = await file.text();
+            const data = JSON.parse(text);
+            
+            const res = await fetch('/api/import', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ data }),
+            });
+            const json = await res.json();
+            if (json.success) {
+              this.showToast(json.message, 'success');
+              await this.loadStocks();
+              await this.loadCategories();
+              await this.loadReports();
+            } else {
+              this.showToast(json.error || '导入失败', 'error');
+            }
+          } catch (e) {
+            this.showToast('导入失败: ' + e.message, 'error');
+          } finally {
+            event.target.value = '';
           }
         },
 

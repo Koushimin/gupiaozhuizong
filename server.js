@@ -458,6 +458,116 @@ app.delete('/api/research/:id', (req, res) => {
   }
 });
 
+// ====== Data Import / Export ======
+
+/**
+ * GET /api/export - Export all data as JSON
+ */
+app.get('/api/export', (req, res) => {
+  try {
+    const db = getDb();
+    const exportData = {
+      version: '1.0',
+      exported_at: new Date().toISOString(),
+      categories: db.prepare('SELECT * FROM categories ORDER BY sort_order ASC').all(),
+      stocks: db.prepare('SELECT * FROM stocks WHERE is_active = 1 ORDER BY created_at ASC').all(),
+      stock_prices: db.prepare('SELECT sp.* FROM stock_prices sp JOIN stocks s ON sp.stock_id = s.id WHERE s.is_active = 1 ORDER BY sp.recorded_at ASC').all(),
+      research_reports: db.prepare('SELECT * FROM research_reports ORDER BY created_at DESC').all(),
+    };
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="stock-tracker-backup-${new Date().toISOString().split('T')[0]}.json"`);
+    res.json({ success: true, data: exportData });
+  } catch (error) {
+    console.error('[API] Export error:', error);
+    res.status(500).json({ success: false, error: '导出失败' });
+  }
+});
+
+/**
+ * POST /api/import - Import data from JSON backup
+ * Expects: { data: { version, categories, stocks, stock_prices, research_reports } }
+ */
+app.post('/api/import', (req, res) => {
+  try {
+    const { data } = req.body;
+    if (!data || !data.stocks) {
+      return res.status(400).json({ success: false, error: '无效的导入数据格式' });
+    }
+
+    const db = getDb();
+    
+    // Use transaction for atomic import
+    const doImport = db.transaction(() => {
+      // Clear existing data (order matters for FK constraints)
+      db.prepare('DELETE FROM stock_prices').run();
+      db.prepare('DELETE FROM stocks').run();
+      db.prepare('DELETE FROM categories').run();
+      db.prepare('DELETE FROM research_reports').run();
+
+      // Import categories
+      const insertCat = db.prepare(`
+        INSERT INTO categories (id, name, color, sort_order, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `);
+      if (data.categories) {
+        for (const cat of data.categories) {
+          insertCat.run(cat.id, cat.name, cat.color || '#6366f1', cat.sort_order || 0, cat.created_at || new Date().toISOString());
+        }
+      }
+
+      // Import stocks
+      const insertStock = db.prepare(`
+        INSERT INTO stocks (id, code, market, name, category_id, reason, notes, tag,
+          added_price, current_price, highest_price, lowest_price, max_drawdown,
+          change_percent, daily_change, join_date, alert_threshold, alert_type, alert_direction, alert_triggered,
+          is_active, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `);
+      for (const stock of data.stocks) {
+        insertStock.run(
+          stock.id, stock.code, stock.market || 'sh', stock.name,
+          stock.category_id || null, stock.reason || '', stock.notes || '', stock.tag || '',
+          stock.added_price, stock.current_price || stock.added_price,
+          stock.highest_price || stock.added_price, stock.lowest_price || stock.added_price,
+          stock.max_drawdown || 0, stock.change_percent || 0, stock.daily_change || 0,
+          stock.join_date || '', stock.alert_threshold || null,
+          stock.alert_type || 'percent', stock.alert_direction || 'down', stock.alert_triggered || 0,
+          1, stock.created_at || new Date().toISOString()
+        );
+      }
+
+      // Import stock_prices
+      const insertPrice = db.prepare(`
+        INSERT INTO stock_prices (stock_id, price, high, low, change_percent, recorded_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      if (data.stock_prices) {
+        for (const p of data.stock_prices) {
+          insertPrice.run(p.stock_id, p.price, p.high || p.price, p.low || p.price, p.change_percent || 0, p.recorded_at || new Date().toISOString());
+        }
+      }
+
+      // Import research reports
+      const insertReport = db.prepare(`
+        INSERT INTO research_reports (id, title, stock_name, summary, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      if (data.research_reports) {
+        for (const r of data.research_reports) {
+          insertReport.run(r.id, r.title || '无标题', r.stock_name || '', r.summary || '', r.created_at || new Date().toISOString());
+        }
+      }
+    });
+
+    doImport();
+    res.json({ success: true, message: `成功导入 ${data.stocks.length} 只股票、${data.categories?.length || 0} 个分类、${data.research_reports?.length || 0} 篇研报` });
+  } catch (error) {
+    console.error('[API] Import error:', error);
+    res.status(500).json({ success: false, error: `导入失败: ${error.message}` });
+  }
+});
+
 // ====== Tunnel Management (external/public access) ======
 let tunnelUrl = null;
 let tunnelProcess = null;
