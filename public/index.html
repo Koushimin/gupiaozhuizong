@@ -1459,11 +1459,12 @@
         <template x-for="cat in categoriesWithStocks" :key="'tc-'+cat.id">
           <div class="mb-5">
             <!-- Category Header -->
-            <div class="flex items-center gap-1 mb-2 category-header" draggable="true"
+            <div class="flex items-center gap-1 mb-2 category-header" 
+                 :draggable="cat.id !== '__uncategorized'"
                  @click="toggleCategoryExpanded(cat.id)"
-                 @dragstart="dragCategoryIdx = cat.id; event.dataTransfer.effectAllowed = 'move'"
-                 @dragover.prevent="dragOverIdx = cat.id;"
-                 @drop.prevent="if (dragCategoryIdx && dragCategoryIdx !== cat.id) { const fromIdx = categories.findIndex(c => c.id == dragCategoryIdx); const toIdx = categories.findIndex(c => c.id == cat.id); if (fromIdx >= 0 && toIdx >= 0) { const item = categories.splice(fromIdx, 1)[0]; categories.splice(toIdx, 0, item); saveCategoryOrder(); } } dragCategoryIdx = null; dragOverIdx = null;"
+                 @dragstart="if (cat.id === '__uncategorized') return; dragCategoryIdx = cat.id; event.dataTransfer.effectAllowed = 'move'"
+                 @dragover.prevent="if (cat.id === '__uncategorized') return; dragOverIdx = cat.id;"
+                 @drop.prevent="if (cat.id === '__uncategorized' || !dragCategoryIdx || dragCategoryIdx === cat.id) return; const fromIdx = categories.findIndex(c => c.id == dragCategoryIdx); const toIdx = categories.findIndex(c => c.id == cat.id); if (fromIdx >= 0 && toIdx >= 0) { const item = categories.splice(fromIdx, 1)[0]; categories.splice(toIdx, 0, item); saveCategoryOrder(); } dragCategoryIdx = null; dragOverIdx = null;"
                  @dragleave="dragOverIdx = null"
                  @dragend="dragCategoryIdx = null; dragOverIdx = null;"
                  :class="dragOverIdx === cat.id && dragOverIdx !== dragCategoryIdx ? 'dragging-over' : ''"
@@ -1491,6 +1492,7 @@
                     <th class="text-left table-stock-code" style="white-space:nowrap;">最高/最低</th>
                     <th class="td-reason-col" style="min-width:110px;">理由</th>
                     <th style="min-width:120px;">备注</th>
+                    <th class="text-center" style="width:36px;"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1529,6 +1531,10 @@
                         <span x-show="stock.notes" class="notes-content" x-text="stock.notes" :title="stock.notes"></span>
                         <span x-show="!stock.notes" class="notes-empty">—</span>
                       </td>
+                      <td class="text-center" style="width:36px;">
+                        <button @click.stop="openEditModal(stock)" class="btn-icon" title="编辑"
+                                style="width:28px;height:28px;font-size:0.8rem;display:inline-flex;align-items:center;justify-content:center;">✏️</button>
+                      </td>
                     </tr>
                   </template>
                 </tbody>
@@ -1542,11 +1548,12 @@
       <div x-show="!loading && stocks.length > 0 && viewMode === 'compact'">
         <template x-for="cat in categoriesWithStocks" :key="cat.id">
           <div class="category-section">
-            <div class="category-header" draggable="true"
+            <div class="category-header" 
+                 :draggable="cat.id !== '__uncategorized'"
                  @click="toggleCategoryExpanded(cat.id)"
-                 @dragstart="dragCategoryIdx = cat.id; event.dataTransfer.effectAllowed = 'move'"
-                 @dragover.prevent="dragOverIdx = cat.id;"
-                 @drop.prevent="if (dragCategoryIdx && dragCategoryIdx !== cat.id) { const fromIdx = categories.findIndex(c => c.id == dragCategoryIdx); const toIdx = categories.findIndex(c => c.id == cat.id); if (fromIdx >= 0 && toIdx >= 0) { const item = categories.splice(fromIdx, 1)[0]; categories.splice(toIdx, 0, item); saveCategoryOrder(); } } dragCategoryIdx = null; dragOverIdx = null;"
+                 @dragstart="if (cat.id === '__uncategorized') return; dragCategoryIdx = cat.id; event.dataTransfer.effectAllowed = 'move'"
+                 @dragover.prevent="if (cat.id === '__uncategorized') return; dragOverIdx = cat.id;"
+                 @drop.prevent="if (cat.id === '__uncategorized' || !dragCategoryIdx || dragCategoryIdx === cat.id) return; const fromIdx = categories.findIndex(c => c.id == dragCategoryIdx); const toIdx = categories.findIndex(c => c.id == cat.id); if (fromIdx >= 0 && toIdx >= 0) { const item = categories.splice(fromIdx, 1)[0]; categories.splice(toIdx, 0, item); saveCategoryOrder(); } dragCategoryIdx = null; dragOverIdx = null;"
                  @dragleave="dragOverIdx = null"
                  @dragend="dragCategoryIdx = null; dragOverIdx = null;"
                  :class="dragOverIdx === cat.id && dragOverIdx !== dragCategoryIdx ? 'dragging-over' : ''"
@@ -2107,9 +2114,6 @@
             catMap[cat.id] = { ...cat, stocks: [] };
           });
 
-          // Add a copy of categories
-          const cats = [...this.categories];
-
           this.sortedStocks.forEach(stock => {
             if (stock.category_id && catMap[stock.category_id]) {
               catMap[stock.category_id].stocks.push(stock);
@@ -2122,18 +2126,12 @@
           if (catMap['__uncategorized'].stocks.length > 0) {
             result.push(catMap['__uncategorized']);
           }
-          cats.forEach(cat => {
-            if (catMap[cat.id] && catMap[cat.id].stocks.length > 0) {
+          // 保留分类在 categories 数组中的顺序，不按空/非空拆分
+          this.categories.forEach(cat => {
+            if (catMap[cat.id]) {
               result.push(catMap[cat.id]);
             }
           });
-          // Also include empty categories if user wants to see them
-          cats.forEach(cat => {
-            if (!result.find(r => r.id === cat.id)) {
-              result.push({ ...cat, stocks: [] });
-            }
-          });
-
           return result;
         },
 
