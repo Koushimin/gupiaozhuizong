@@ -1068,9 +1068,6 @@
         <div class="flex items-center gap-2">
           <!-- View Mode Toggle -->
           <div class="view-toggle mr-1">
-            <button @click="setViewMode('card')" class="view-toggle-btn" :class="viewMode === 'card' ? 'active' : ''" title="卡片模式">
-              <span>▣</span>
-            </button>
             <button @click="setViewMode('compact')" class="view-toggle-btn" :class="viewMode === 'compact' ? 'active' : ''" title="紧凑模式">
               <span>☰</span>
             </button>
@@ -1149,7 +1146,6 @@
     <div class="space-y-1 mb-4">
       <p class="text-xs stat-label px-4 mb-2">显示模式</p>
       <div class="flex gap-2 px-4 mb-4">
-        <button @click="setViewMode('card'); mobileMenuOpen = false" class="view-toggle-btn flex-1 justify-center" :class="viewMode === 'card' ? 'active' : ''">▣ 卡片</button>
         <button @click="setViewMode('compact'); mobileMenuOpen = false" class="view-toggle-btn flex-1 justify-center" :class="viewMode === 'compact' ? 'active' : ''">☰ 紧凑</button>
         <button @click="setViewMode('table'); mobileMenuOpen = false" class="view-toggle-btn flex-1 justify-center" :class="viewMode === 'table' ? 'active' : ''">⊞ 列表</button>
       </div>
@@ -1372,6 +1368,11 @@
                   :class="sortBy === 'return' ? 'bg-indigo-500/20 text-indigo-400' : 'stat-label hover:text-gray-300'">
             📈 涨幅 <span x-show="sortBy === 'return'" x-text="sortAsc ? '↑' : '↓'"></span>
           </button>
+          <button @click="toggleSort('daily')" 
+                  class="px-2.5 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1"
+                  :class="sortBy === 'daily' ? 'bg-indigo-500/20 text-indigo-400' : 'stat-label hover:text-gray-300'">
+            📊 日涨跌 <span x-show="sortBy === 'daily'" x-text="sortAsc ? '↑' : '↓'"></span>
+          </button>
         </div>
         <button @click="openAddModal()" class="btn-primary text-sm sm:text-base" style="padding:10px 18px;">
           <span>＋</span>
@@ -1399,76 +1400,86 @@
       <!-- Loading State -->
       <div x-show="loading" class="stocks-grid" :class="viewMode === 'compact' ? 'compact' : ''">
         <template x-for="i in 3">
-        <div class="glass-card skeleton" :class="viewMode === 'compact' ? 'compact-card' : ''" style="height: 180px;"></div>
+        <div class="glass-card skeleton" style="height: 180px;"></div>
         </template>
       </div>
 
-      <!-- ===== TABLE VIEW ===== -->
+      <!-- ===== TABLE VIEW (Grouped by Category) ===== -->
       <div x-show="!loading && stocks.length > 0 && viewMode === 'table'">
-        <div class="glass-card !p-0 !overflow-hidden" style="border-radius:16px;">
-          <table class="table-view">
-            <thead>
-              <tr class="table-header">
-                <th @click="toggleSort('time')" style="min-width:140px">
-                  股票 <span x-show="sortBy === 'time'" x-text="sortAsc ? '↑' : '↓'"></span>
-                </th>
-                <th class="text-right">现价</th>
-                <th class="text-right">日涨跌</th>
-                <th @click="toggleSort('return')" class="text-right">
-                  加入至今 <span x-show="sortBy === 'return'" x-text="sortAsc ? '↑' : '↓'"></span>
-                </th>
-                <th class="text-right table-stock-code" style="white-space:nowrap;">区间最高/最低</th>
-                <th class="td-reason-col" style="min-width:120px;">加入理由</th>
-                <th class="text-right" style="min-width:85px;">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <template x-for="stock in sortedStocks" :key="stock.id">
-                <tr class="table-row" :class="(stock.change_percent || 0) > 5 ? 'profit-glow' : (stock.change_percent || 0) < -5 ? 'loss-glow' : ''"
-                    @click="openDetail(stock)" style="cursor:pointer;">
-                  <td class="td-name">
-                    <div class="flex items-center gap-2">
-                      <div>
-                        <div class="stock-name flex items-center gap-1.5" x-text="stock.name"></div>
-                        <span class="stock-code text-xs opacity-60" x-text="stock.code"></span>
-                      </div>
-                      <span class="market-tag text-xs flex-shrink-0" :class="'market-' + stock.market" x-text="stock.market.toUpperCase()"></span>
-                      <span x-show="stock.tag" class="stock-tag" :class="stock.tag" x-text="stock.tag"></span>
-                    </div>
-                  </td>
-                  <td class="td-price text-right whitespace-nowrap">
-                    <span x-text="formatPrice(stock.current_price)"></span>
-                  </td>
-                  <td class="td-change text-right whitespace-nowrap" :class="(stock.daily_change || 0) >= 0 ? 'price-up' : 'price-down'">
-                    <span x-text="formatPercent(stock.daily_change)"></span>
-                  </td>
-                  <td class="td-since text-right whitespace-nowrap" :class="stock.change_percent >= 0 ? 'price-up' : 'price-down'">
-                    <span x-text="formatPercent(stock.change_percent)"></span>
-                  </td>
-                  <td class="text-right text-xs opacity-60 table-stock-code whitespace-nowrap">
-                    <span class="price-up" x-text="formatPrice(stock.highest_price)"></span>
-                    <span class="opacity-40">/</span>
-                    <span class="price-down" x-text="formatPrice(stock.lowest_price)"></span>
-                  </td>
-                  <td class="td-reason-col text-xs" style="max-width:180px;">
-                    <span x-show="stock.reason" class="truncate block" x-text="stock.reason" :title="stock.reason"></span>
-                    <span x-show="!stock.reason" class="opacity-40">—</span>
-                  </td>
-                  <td class="td-actions whitespace-nowrap">
-                    <button @click="openEditModal(stock)" class="btn-icon" title="编辑" style="width:30px;height:30px;font-size:0.85rem;display:inline-flex;">✏️</button>
-                    <button @click="removeStock(stock.id, stock.name)" class="btn-danger" style="padding:4px 10px;font-size:0.7rem;">移除</button>
-                  </td>
-                </tr>
-              </template>
-            </tbody>
-          </table>
-        </div>
+        <template x-for="cat in categoriesWithStocks" :key="'tc-'+cat.id">
+          <div class="mb-5">
+            <!-- Category Header -->
+            <div class="flex items-center gap-2 px-1 mb-2">
+              <span class="category-color-dot" :style="'background:' + cat.color"></span>
+              <span class="text-sm font-semibold" :class="theme === 'light' ? 'text-gray-700' : 'text-gray-300'" x-text="cat.name || '未分类'"></span>
+              <span class="text-xs stat-label" x-text="'(' + cat.stocks.length + '只)'"></span>
+            </div>
+            <div class="glass-card !p-0 !overflow-hidden" style="border-radius:14px;">
+              <table class="table-view">
+                <thead>
+                  <tr class="table-header">
+                    <th @click="toggleSort('time')" style="min-width:130px">
+                      股票 <span x-show="sortBy === 'time'" x-text="sortAsc ? '↑' : '↓'"></span>
+                    </th>
+                    <th class="text-right">现价</th>
+                    <th @click="toggleSort('daily')" class="text-right" style="cursor:pointer;white-space:nowrap;">
+                      日涨跌 <span x-show="sortBy === 'daily'" x-text="sortAsc ? '↑' : '↓'"></span>
+                    </th>
+                    <th @click="toggleSort('return')" class="text-right" style="cursor:pointer;white-space:nowrap;">
+                      加入至今 <span x-show="sortBy === 'return'" x-text="sortAsc ? '↑' : '↓'"></span>
+                    </th>
+                    <th class="text-right table-stock-code" style="white-space:nowrap;">区间最高/最低</th>
+                    <th class="td-reason-col" style="min-width:110px;">理由</th>
+                    <th class="text-right" style="min-width:75px;">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="stock in cat.stocks" :key="stock.id">
+                    <tr class="table-row" :class="(stock.change_percent || 0) > 5 ? 'profit-glow' : (stock.change_percent || 0) < -5 ? 'loss-glow' : ''"
+                        @click="openDetail(stock)" style="cursor:pointer;">
+                      <td class="td-name">
+                        <div class="flex items-center gap-1.5">
+                          <div class="min-w-0">
+                            <div class="stock-name text-sm sm:text-base font-semibold truncate flex items-center gap-1" x-text="stock.name"></div>
+                            <span class="stock-code text-xs opacity-50" x-text="stock.code"></span>
+                          </div>
+                          <span class="market-tag text-xs flex-shrink-0" :class="'market-' + stock.market" x-text="stock.market.toUpperCase()"></span>
+                          <span x-show="stock.tag" class="stock-tag hidden sm:inline-flex" :class="stock.tag" x-text="stock.tag"></span>
+                        </div>
+                      </td>
+                      <td class="td-price text-right whitespace-nowrap font-semibold text-sm">
+                        <span x-text="formatPrice(stock.current_price)"></span>
+                      </td>
+                      <td class="td-change text-right whitespace-nowrap text-sm" :class="(stock.daily_change || 0) >= 0 ? 'price-up' : 'price-down'">
+                        <span x-text="formatPercent(stock.daily_change)"></span>
+                      </td>
+                      <td class="td-since text-right whitespace-nowrap text-sm" :class="stock.change_percent >= 0 ? 'price-up' : 'price-down'">
+                        <span x-text="formatPercent(stock.change_percent)"></span>
+                      </td>
+                      <td class="text-right text-xs opacity-60 table-stock-code whitespace-nowrap">
+                        <span class="price-up" x-text="formatPrice(stock.highest_price)"></span>
+                        <span class="opacity-30 mx-0.5">/</span>
+                        <span class="price-down" x-text="formatPrice(stock.lowest_price)"></span>
+                      </td>
+                      <td class="td-reason-col text-xs" style="max-width:160px;">
+                        <span x-show="stock.reason" class="truncate block opacity-70" x-text="stock.reason" :title="stock.reason"></span>
+                        <span x-show="!stock.reason" class="opacity-30">—</span>
+                      </td>
+                      <td class="td-actions whitespace-nowrap text-right">
+                        <button @click.stop="openEditModal(stock)" class="btn-icon" title="编辑" style="width:28px;height:28px;font-size:0.8rem;display:inline-flex;">✏️</button>
+                        <button @click.stop="removeStock(stock.id, stock.name)" class="btn-danger" style="padding:3px 8px;font-size:0.65rem;">✕</button>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </template>
       </div>
 
-      <!-- ===== CARD / COMPACT VIEW (Grouped by Category) ===== -->
-      <div x-show="!loading && stocks.length > 0 && viewMode !== 'table'">
-        
-        <!-- Render each category -->
+      <!-- ===== COMPACT VIEW (Grouped by Category) ===== -->
+      <div x-show="!loading && stocks.length > 0 && viewMode === 'compact'">
         <template x-for="cat in categoriesWithStocks" :key="cat.id">
           <div class="category-section">
             <div class="category-header" @click="toggleCategoryExpanded(cat.id)">
@@ -1477,13 +1488,10 @@
               <span class="category-stock-count" x-text="cat.stocks.length + '只'"></span>
               <span class="category-expand-icon" :class="isCategoryExpanded(cat.id) ? 'expanded' : ''">▼</span>
             </div>
-            
             <div x-show="isCategoryExpanded(cat.id)" x-collapse.duration.200ms>
-              <div class="stocks-grid" :class="viewMode === 'compact' ? 'compact' : ''">
+              <div class="stocks-grid compact">
                 <template x-for="(stock, index) in cat.stocks" :key="stock.id">
-                  <!-- Compact Card -->
-                  <div x-show="viewMode === 'compact'"
-                       class="glass-card compact-card card-enter"
+                  <div class="glass-card compact-card card-enter"
                        :style="`animation-delay: ${index * 0.05}s`"
                        :class="(stock.change_percent || 0) >= 10 ? 'profit-glow' : (stock.change_percent || 0) <= -10 ? 'loss-glow' : ''">
                     <div class="flex items-start justify-between">
@@ -1528,12 +1536,11 @@
                       <p x-show="stock.reason" class="reason-text stat-label" x-text="'💡 ' + stock.reason"></p>
                       <p x-show="stock.notes" class="text-xs notes-text mt-0.5" x-text="'📝 ' + stock.notes"></p>
                     </div>
-                    <!-- Progress bar -->
                     <div class="progress-bar mt-1.5">
                       <div class="fill" :class="(stock.max_drawdown || 0) > -10 ? 'good' : (stock.max_drawdown || 0) > -20 ? 'warn' : 'bad'"
                            :style="'width:' + Math.min(Math.abs(stock.max_drawdown || 0), 50) + '%'"></div>
                     </div>
-                    <!-- Category picker dropdown -->
+                    <!-- Category picker -->
                     <div x-show="categoryPickerFor === stock.id" class="category-picker"
                          @click.away="categoryPickerFor = null">
                       <div class="text-xs stat-label px-2 py-1 mb-1">移动分类</div>
@@ -1550,103 +1557,6 @@
                         </div>
                       </template>
                     </div>
-                  </div>
-
-                  <!-- Full Card (default viewMode) -->
-                  <div x-show="viewMode === 'card'"
-                       class="glass-card card-enter"
-                       :style="`animation-delay: ${index * 0.08}s`"
-                       :class="(stock.change_percent || 0) >= 10 ? 'profit-glow' : (stock.change_percent || 0) <= -10 ? 'loss-glow' : ''">
-                    <div class="deco-line"></div>
-                    
-                    <!-- Header -->
-                    <div class="flex items-start justify-between mb-3">
-                      <div class="flex-1 min-w-0">
-                        <div class="flex items-center gap-1.5 mb-0.5">
-                          <h3 class="text-lg font-bold truncate" x-text="stock.name"></h3>
-                          <span class="market-tag flex-shrink-0" :class="'market-' + stock.market" x-text="stock.market.toUpperCase()"></span>
-                          <span x-show="stock.tag" class="stock-tag" :class="stock.tag" x-text="stock.tag"></span>
-                        </div>
-                        <p class="text-sm stat-label flex items-center gap-2">
-                          <span x-text="stock.code"></span>
-                          <!-- Category label -->
-                          <span x-show="getCategoryName(stock.category_id)" 
-                                class="text-xs px-2 py-0.5 rounded-full category-tag"
-                                :style="'color:' + getCategoryColor(stock.category_id)"
-                                @click.stop="openCategoryPicker(stock.id)" style="cursor:pointer;">
-                            🏷️ <span x-text="getCategoryName(stock.category_id)"></span>
-                          </span>
-                        </p>
-                      </div>
-                      <div class="flex items-center gap-1.5 shrink-0">
-                        <button @click.stop="openCategoryPicker(stock.id)" class="btn-icon" title="移动分类">📂</button>
-                        <button @click.stop="openEditModal(stock)" class="btn-icon" title="编辑">✏️</button>
-                        <button @click.stop="removeStock(stock.id, stock.name)" class="btn-danger" style="padding:6px 12px;">移除</button>
-                      </div>
-                    </div>
-
-                    <!-- Category picker dropdown (for card view) -->
-                    <div x-show="categoryPickerFor === stock.id" class="category-picker" style="right:auto;left:0;"
-                         @click.away="categoryPickerFor = null">
-                      <div class="text-xs stat-label px-2 py-1 mb-1">移动分类</div>
-                      <div @click="moveStockToCategory(stock.id, null); categoryPickerFor = null"
-                           class="category-option" :class="!stock.category_id ? 'active' : ''">
-                        <span class="category-color-dot" style="background:#888;"></span>
-                        <span>未分类</span>
-                      </div>
-                      <template x-for="cat in categories" :key="cat.id">
-                        <div @click="moveStockToCategory(stock.id, cat.id); categoryPickerFor = null"
-                             class="category-option" :class="stock.category_id === cat.id ? 'active' : ''">
-                          <span class="category-color-dot" :style="'background:' + cat.color"></span>
-                          <span x-text="cat.name"></span>
-                        </div>
-                      </template>
-                    </div>
-
-                    <!-- Price Section -->
-                    <div class="flex items-baseline gap-3 mb-3">
-                      <span class="text-3xl font-bold tracking-tight" x-text="formatPrice(stock.current_price)"></span>
-                      <span class="text-lg font-semibold" :class="(stock.daily_change || 0) >= 0 ? 'price-up' : 'price-down'"
-                            x-text="formatPercent(stock.daily_change)"></span>
-                    </div>
-
-                    <!-- Stats Grid -->
-                    <div class="grid grid-cols-4 gap-3 mb-3">
-                      <div>
-                        <p class="text-xs stat-label mb-0.5">加入价格</p>
-                        <p class="font-semibold" :class="theme === 'light' ? 'text-gray-700' : 'text-gray-300'" x-text="formatPrice(stock.added_price)"></p>
-                      </div>
-                      <div>
-                        <p class="text-xs stat-label mb-0.5">期间最高</p>
-                        <p class="font-semibold price-up" x-text="formatPrice(stock.highest_price)"></p>
-                      </div>
-                      <div>
-                        <p class="text-xs stat-label mb-0.5">期间最低</p>
-                        <p class="font-semibold price-down" x-text="formatPrice(stock.lowest_price)"></p>
-                      </div>
-                      <div>
-                        <p class="text-xs stat-label mb-0.5">加入至今</p>
-                        <p class="font-semibold" :class="stock.change_percent >= 0 ? 'price-up' : 'price-down'" x-text="formatPercent(stock.change_percent)"></p>
-                      </div>
-                    </div>
-
-                    <!-- Progress bar for max drawdown -->
-                    <div class="progress-bar mb-3">
-                      <div class="fill" :class="(stock.max_drawdown || 0) > -10 ? 'good' : (stock.max_drawdown || 0) > -20 ? 'warn' : 'bad'"
-                           :style="'width:' + Math.min(Math.abs(stock.max_drawdown || 0), 50) + '%'"></div>
-                    </div>
-
-                    <!-- Reason + Notes + Join Time -->
-                    <div x-show="stock.reason || stock.notes || stock.join_date" class="pt-3 border-t border-gray-200/20">
-                      <div class="flex items-center justify-between mb-1">
-                        <p x-show="stock.reason" class="text-xs stat-label">💡 加入理由</p>
-                        <p x-show="stock.join_date" class="text-xs stat-label" x-text="'📅 ' + stock.join_date + ' 加入'"></p>
-                      </div>
-                      <p class="text-sm reason-text leading-relaxed" x-text="stock.reason" style="font-size:0.9rem"></p>
-                      <p x-show="stock.notes" class="text-sm notes-text leading-relaxed mt-1.5 pt-1.5 border-t border-gray-200/10" 
-                         style="font-size:0.85rem" x-text="'📝 ' + stock.notes"></p>
-                    </div>
-
                   </div>
                 </template>
               </div>
@@ -2424,6 +2334,9 @@
               return this.sortAsc ? -diff : diff;
             } else if (this.sortBy === 'return') {
               const diff = (b.change_percent || 0) - (a.change_percent || 0);
+              return this.sortAsc ? -diff : diff;
+            } else if (this.sortBy === 'daily') {
+              const diff = (b.daily_change || 0) - (a.daily_change || 0);
               return this.sortAsc ? -diff : diff;
             }
             return 0;
