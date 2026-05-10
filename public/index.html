@@ -678,8 +678,10 @@
     .ticker-track {
       display: flex;
       gap: 32px;
-      animation: tickerScroll 30s linear infinite;
       width: max-content;
+    }
+    .ticker-track.animating {
+      animation: tickerScroll linear infinite;
     }
     .ticker-track:hover {
       animation-play-state: paused;
@@ -971,7 +973,6 @@
       }
       .ticker-track {
         gap: 20px;
-        animation-duration: 20s;
       }
       .ticker-item {
         padding: 2px 8px;
@@ -1250,7 +1251,7 @@
     
     <!-- Scrolling Stock Ticker -->
     <div x-show="!loading && stocks.length > 0" class="ticker-container">
-      <div class="ticker-track">
+      <div class="ticker-track animating" :style="'animation-duration:' + tickerDuration + 's'">
         <template x-for="stock in sortedStocks" :key="'t-'+stock.id">
           <div class="ticker-item" :class="stock.alert_triggered ? 'alert-triggered' : ''" @click="openDetail(stock)">
             <span class="ticker-name" x-text="stock.name"></span>
@@ -1270,11 +1271,20 @@
           </div>
         </template>
       </div>
+      <div class="flex items-center gap-1 mt-1" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);z-index:5;">
+        <template x-for="opt in tickerSpeedOptions" :key="opt.key">
+          <button @click="setTickerSpeed(opt.key)"
+                  class="text-xs rounded px-1.5 py-0.5 transition-all"
+                  :class="tickerSpeed === opt.key ? 'bg-indigo-500/20 text-indigo-400 font-semibold' : 'opacity-30 hover:opacity-60'"
+                  style="border:none;cursor:pointer;background:rgba(0,0,0,0.2);"
+                  x-text="opt.label"></button>
+        </template>
+      </div>
     </div>
 
     <!-- Notes Scrolling Ticker (stocks with personal notes) -->
     <div x-show="!loading && stocksWithNotes.length > 0" class="ticker-container" style="padding:6px 0;margin-bottom:10px;">
-      <div class="ticker-track" style="animation-duration:40s;">
+      <div class="ticker-track animating" :style="'animation-duration:' + (tickerDuration + 10) + 's'">
         <template x-for="stock in stocksWithNotes" :key="'n-'+stock.id">
           <div class="ticker-item" @click="openDetail(stock)">
             <span style="font-size:0.75rem;opacity:0.6;">📝</span>
@@ -2047,6 +2057,12 @@
         dragOverIdx: -1,
         pinnedCategories: JSON.parse(localStorage.getItem('pinnedCategories') || '[]'),
         uncategorizedPosition: parseInt(localStorage.getItem('uncategorizedPosition') || '0'),
+        tickerSpeed: localStorage.getItem('tickerSpeed') || 'medium',
+        tickerSpeedOptions: [
+          { key: 'slow', label: '慢', duration: 60 },
+          { key: 'medium', label: '中', duration: 40 },
+          { key: 'fast', label: '快', duration: 25 },
+        ],
 
         stockTags: [
           { value: '关注', label: '🔥 重点关注' },
@@ -2239,6 +2255,16 @@
         saveUncategorizedPosition(pos) {
           this.uncategorizedPosition = pos;
           localStorage.setItem('uncategorizedPosition', pos.toString());
+        },
+
+        get tickerDuration() {
+          const opt = this.tickerSpeedOptions.find(o => o.key === this.tickerSpeed);
+          return opt ? opt.duration : 40;
+        },
+
+        setTickerSpeed(key) {
+          this.tickerSpeed = key;
+          localStorage.setItem('tickerSpeed', key);
         },
 
         doCategoryDrop(targetId) {
