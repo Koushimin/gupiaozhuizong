@@ -547,11 +547,11 @@
       font-weight: 600;
     }
     .compact-card .reason-text {
-      font-size: 0.75rem;
-      white-space: nowrap;
+      font-size: 0.85rem;
       overflow: hidden;
       text-overflow: ellipsis;
       max-width: 100%;
+      line-height: 1.5;
     }
     .compact-card .card-actions {
       gap: 4px;
@@ -1493,7 +1493,8 @@
                     :class="isPinned(cat.id) ? 'pinned' : ''">📌</span>
               <span class="category-expand-icon" :class="isCategoryExpanded(cat.id) ? 'expanded' : ''" style="margin-left:auto;">▼</span>
             </div>
-            <div class="glass-card !p-0 !overflow-hidden" style="border-radius:14px;">
+            <div x-show="isCategoryExpanded(cat.id)" x-collapse.duration.200ms>
+              <div class="glass-card !p-0 !overflow-hidden" style="border-radius:14px;">
               <table class="table-view">
                 <thead>
                   <tr class="table-header">
@@ -1507,7 +1508,7 @@
                     <th @click="toggleSort('return')" class="text-left" style="cursor:pointer;white-space:nowrap;">
                       加入至今 <span x-show="sortBy === 'return'" x-text="sortAsc ? '↑' : '↓'"></span>
                     </th>
-                    <th class="text-left table-stock-code" style="white-space:nowrap;">最高/最低</th>
+                    <th class="text-left table-stock-code" style="white-space:nowrap;">加入后最高/最低</th>
                     <th class="td-reason-col" style="min-width:110px;">理由</th>
                     <th style="min-width:120px;">备注</th>
                     <th class="text-center" style="width:36px;"></th>
@@ -1530,18 +1531,18 @@
                       <td class="td-price text-left whitespace-nowrap font-semibold text-sm" style="padding-right:6px;">
                         <span x-text="formatPrice(stock.current_price)"></span>
                       </td>
-                      <td class="td-change text-left whitespace-nowrap text-xs" :class="(stock.daily_change || 0) >= 0 ? 'price-up' : 'price-down'" style="padding-right:6px;">
+                      <td class="td-change text-left whitespace-nowrap text-sm" :class="(stock.daily_change || 0) >= 0 ? 'price-up' : 'price-down'" style="padding-right:6px;">
                         <span x-text="formatPercent(stock.daily_change)"></span>
                       </td>
-                      <td class="td-since text-left whitespace-nowrap text-xs" :class="stock.change_percent >= 0 ? 'price-up' : 'price-down'" style="padding-right:6px;">
+                      <td class="td-since text-left whitespace-nowrap text-sm" :class="stock.change_percent >= 0 ? 'price-up' : 'price-down'" style="padding-right:6px;">
                         <span x-text="formatPercent(stock.change_percent)"></span>
                       </td>
-                      <td class="text-left text-xs opacity-60 table-stock-code whitespace-nowrap" style="padding-right:6px;">
+                      <td class="text-left text-sm opacity-60 table-stock-code whitespace-nowrap" style="padding-right:6px;">
                         <span class="price-up" x-text="formatPrice(stock.highest_price)"></span>
                         <span class="opacity-30 mx-0.5">/</span>
                         <span class="price-down" x-text="formatPrice(stock.lowest_price)"></span>
                       </td>
-                      <td class="td-reason-col text-xs" style="max-width:150px;">
+                      <td class="td-reason-col text-sm" style="max-width:150px;">
                         <span x-show="stock.reason" class="truncate block opacity-70" x-text="stock.reason" :title="stock.reason"></span>
                         <span x-show="!stock.reason" class="opacity-30">—</span>
                       </td>
