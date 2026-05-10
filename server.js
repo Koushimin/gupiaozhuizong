@@ -933,6 +933,32 @@ app.delete('/api/categories/:id', (req, res) => {
 });
 
 /**
+ * POST /api/categories/reorder - Reorder categories
+ * Expects: { order: [{ id: 1, sort_order: 0 }, ...] }
+ */
+app.post('/api/categories/reorder', (req, res) => {
+  try {
+    const { order } = req.body;
+    if (!Array.isArray(order) || order.length === 0) {
+      return res.status(400).json({ success: false, error: '无效的排序数据' });
+    }
+
+    const db = getDb();
+    const stmt = db.prepare('UPDATE categories SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+    const reorder = db.transaction((items) => {
+      for (const item of items) {
+        stmt.run(item.sort_order, item.id);
+      }
+    });
+    reorder(order);
+    res.json({ success: true, message: '分类排序已更新' });
+  } catch (error) {
+    console.error('[API] Reorder error:', error);
+    res.status(500).json({ success: false, error: '排序更新失败' });
+  }
+});
+
+/**
  * DELETE /api/stocks/:id - Remove stock from watchlist
  */
 app.delete('/api/stocks/:id', (req, res) => {

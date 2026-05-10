@@ -1953,24 +1953,33 @@
 
         <!-- Category List -->
         <div>
-          <label class="block text-sm font-medium mb-2 stat-label">已有分类</label>
+          <label class="block text-sm font-medium mb-2 stat-label">已有分类 <span class="text-xs opacity-50">(拖动排序)</span></label>
           <div x-show="categories.length === 0" class="text-sm stat-label py-4 text-center">
             暂无分类，在上方新建
           </div>
-          <template x-for="cat in categories" :key="cat.id">
-            <div class="category-list-item">
-              <span class="category-color-dot" :style="'background:' + cat.color"></span>
-              <input type="text" x-model="cat.editName" 
-                     class="input-field flex-1" style="padding:8px 12px;font-size:0.9rem;"
-                     @keyup.enter="updateCategory(cat.id, cat.editName, cat.color)">
-              <div class="flex gap-1">
-                <button @click="updateCategory(cat.id, cat.editName, cat.color)" 
-                        class="btn-secondary text-xs py-1.5 px-3">保存</button>
-                <button @click="deleteCategory(cat.id, cat.name)" 
-                        class="btn-danger text-xs py-1.5 px-3">删除</button>
+          <div @dragend="saveCategoryOrder(); dragCategoryIdx = -1; dragOverIdx = -1;">
+            <template x-for="(cat, idx) in categories" :key="cat.id">
+              <div class="category-list-item" draggable="true"
+                   @dragstart="dragCategoryIdx = idx; event.dataTransfer.effectAllowed = 'move'"
+                   @dragover.prevent="dragOverIdx = idx"
+                   @drop.prevent="if (dragCategoryIdx >= 0 && dragCategoryIdx !== idx) { const item = categories.splice(dragCategoryIdx, 1)[0]; categories.splice(idx, 0, item); }"
+                   @dragleave="dragOverIdx = -1"
+                   :class="{'opacity-30': dragCategoryIdx === idx, 'ring-2 ring-indigo-400': dragOverIdx === idx && dragOverIdx !== dragCategoryIdx}"
+                   :style="dragOverIdx === idx && dragOverIdx !== dragCategoryIdx ? 'transform: scale(1.02); border-color: #6366f1;' : ''">
+                <span style="cursor:grab;font-size:0.9rem;opacity:0.4;user-select:none;">⠿</span>
+                <span class="category-color-dot" :style="'background:' + cat.color"></span>
+                <input type="text" x-model="cat.editName" 
+                       class="input-field flex-1" style="padding:8px 12px;font-size:0.9rem;"
+                       @keyup.enter="updateCategory(cat.id, cat.editName, cat.color)">
+                <div class="flex gap-1">
+                  <button @click="updateCategory(cat.id, cat.editName, cat.color)" 
+                          class="btn-secondary text-xs py-1.5 px-3">保存</button>
+                  <button @click="deleteCategory(cat.id, cat.name)" 
+                          class="btn-danger text-xs py-1.5 px-3">删除</button>
+                </div>
               </div>
-            </div>
-          </template>
+            </template>
+          </div>
         </div>
       </div>
     </div>
@@ -2027,6 +2036,8 @@
         categoryExpanded: {},
         categoryPickerFor: null,
         newStockCategoryId: '',
+        dragCategoryIdx: -1,
+        dragOverIdx: -1,
 
         stockTags: [
           { value: '关注', label: '🔥 重点关注' },
@@ -2270,6 +2281,29 @@
             }
           } catch (e) {
             this.showToast('删除失败', 'error');
+          }
+        },
+
+        async saveCategoryOrder() {
+          // Reset drag state
+          this.dragCategoryIdx = -1;
+          this.dragOverIdx = -1;
+          
+          // Build order array from current categories order
+          const order = this.categories.map((cat, idx) => ({ id: cat.id, sort_order: idx }));
+          try {
+            const res = await fetch('/api/categories/reorder', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ order }),
+            });
+            const json = await res.json();
+            if (json.success) {
+              // Reload categories to get updated order
+              await this.loadCategories();
+            }
+          } catch (e) {
+            console.error('Reorder error:', e);
           }
         },
 
