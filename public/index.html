@@ -1093,9 +1093,25 @@
       font-weight: 400;
     }
 
-    /* Dragging state */
-    .cat-dragging {
-      opacity: 0.3;
+    /* Pin button */
+    .category-pin-btn {
+      font-size: 0.75rem;
+      cursor: pointer;
+      opacity: 0.25;
+      transition: opacity 0.2s, transform 0.2s;
+      user-select: none;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+    .category-header:hover .category-pin-btn {
+      opacity: 0.5;
+    }
+    .category-pin-btn:hover {
+      opacity: 1 !important;
+      transform: scale(1.15);
+    }
+    .category-pin-btn.pinned {
+      opacity: 0.8;
     }
   </style>
 </head>
@@ -1460,12 +1476,12 @@
           <div class="mb-5">
             <!-- Category Header -->
             <div class="flex items-center gap-1 mb-2 category-header" 
-                 :draggable="cat.id !== '__uncategorized'"
+                 draggable="true"
                  @click="toggleCategoryExpanded(cat.id)"
-                 @dragstart="if (cat.id === '__uncategorized') return; dragCategoryIdx = cat.id; event.dataTransfer.effectAllowed = 'move'"
-                 @dragover.prevent="if (cat.id === '__uncategorized') return; dragOverIdx = cat.id;"
-                 @drop.prevent="if (cat.id === '__uncategorized' || !dragCategoryIdx || dragCategoryIdx === cat.id) return; const fromIdx = categories.findIndex(c => c.id == dragCategoryIdx); const toIdx = categories.findIndex(c => c.id == cat.id); if (fromIdx >= 0 && toIdx >= 0) { const item = categories.splice(fromIdx, 1)[0]; categories.splice(toIdx, 0, item); saveCategoryOrder(); } dragCategoryIdx = null; dragOverIdx = null;"
-                 @dragleave="dragOverIdx = null"
+                 @dragstart="dragCategoryIdx = cat.id; event.dataTransfer.effectAllowed = 'move'"
+                 @dragover.prevent="if (dragCategoryIdx && dragCategoryIdx !== cat.id) dragOverIdx = cat.id;"
+                 @drop.prevent="doCategoryDrop(cat.id)"
+                 @dragleave="if (dragOverIdx === cat.id) dragOverIdx = null"
                  @dragend="dragCategoryIdx = null; dragOverIdx = null;"
                  :class="dragOverIdx === cat.id && dragOverIdx !== dragCategoryIdx ? 'dragging-over' : ''"
                  :style="dragCategoryIdx === cat.id ? 'opacity:0.3;' : ''">
@@ -1473,6 +1489,8 @@
               <span class="category-color-dot" :style="'background:' + cat.color"></span>
               <span class="text-sm font-semibold" :class="theme === 'light' ? 'text-gray-700' : 'text-gray-300'" x-text="cat.name || '未分类'"></span>
               <span class="text-xs stat-label" x-text="'(' + cat.stocks.length + '只)'"></span>
+              <span class="category-pin-btn" @click.stop="togglePin(cat.id)" title="置顶"
+                    :class="isPinned(cat.id) ? 'pinned' : ''">📌</span>
               <span class="category-expand-icon" :class="isCategoryExpanded(cat.id) ? 'expanded' : ''" style="margin-left:auto;">▼</span>
             </div>
             <div class="glass-card !p-0 !overflow-hidden" style="border-radius:14px;">
@@ -1549,12 +1567,12 @@
         <template x-for="cat in categoriesWithStocks" :key="cat.id">
           <div class="category-section">
             <div class="category-header" 
-                 :draggable="cat.id !== '__uncategorized'"
+                 draggable="true"
                  @click="toggleCategoryExpanded(cat.id)"
-                 @dragstart="if (cat.id === '__uncategorized') return; dragCategoryIdx = cat.id; event.dataTransfer.effectAllowed = 'move'"
-                 @dragover.prevent="if (cat.id === '__uncategorized') return; dragOverIdx = cat.id;"
-                 @drop.prevent="if (cat.id === '__uncategorized' || !dragCategoryIdx || dragCategoryIdx === cat.id) return; const fromIdx = categories.findIndex(c => c.id == dragCategoryIdx); const toIdx = categories.findIndex(c => c.id == cat.id); if (fromIdx >= 0 && toIdx >= 0) { const item = categories.splice(fromIdx, 1)[0]; categories.splice(toIdx, 0, item); saveCategoryOrder(); } dragCategoryIdx = null; dragOverIdx = null;"
-                 @dragleave="dragOverIdx = null"
+                 @dragstart="dragCategoryIdx = cat.id; event.dataTransfer.effectAllowed = 'move'"
+                 @dragover.prevent="if (dragCategoryIdx && dragCategoryIdx !== cat.id) dragOverIdx = cat.id;"
+                 @drop.prevent="doCategoryDrop(cat.id)"
+                 @dragleave="if (dragOverIdx === cat.id) dragOverIdx = null"
                  @dragend="dragCategoryIdx = null; dragOverIdx = null;"
                  :class="dragOverIdx === cat.id && dragOverIdx !== dragCategoryIdx ? 'dragging-over' : ''"
                  :style="dragCategoryIdx === cat.id ? 'opacity:0.3;' : ''">
@@ -1562,6 +1580,8 @@
               <span class="category-color-dot" :style="'background:' + cat.color"></span>
               <span class="category-name" :class="theme === 'light' ? 'text-gray-800' : 'text-gray-100'" x-text="cat.name || '未分类'"></span>
               <span class="category-stock-count" x-text="cat.stocks.length + '只'"></span>
+              <span class="category-pin-btn" @click.stop="togglePin(cat.id)" title="置顶"
+                    :class="isPinned(cat.id) ? 'pinned' : ''">📌</span>
               <span class="category-expand-icon" :class="isCategoryExpanded(cat.id) ? 'expanded' : ''">▼</span>
             </div>
             <div x-show="isCategoryExpanded(cat.id)" x-collapse.duration.200ms>
@@ -2024,6 +2044,8 @@
         newStockCategoryId: '',
         dragCategoryIdx: -1,
         dragOverIdx: -1,
+        pinnedCategories: JSON.parse(localStorage.getItem('pinnedCategories') || '[]'),
+        uncategorizedPosition: parseInt(localStorage.getItem('uncategorizedPosition') || '0'),
 
         stockTags: [
           { value: '关注', label: '🔥 重点关注' },
@@ -2102,7 +2124,6 @@
           // Group stocks by category
           const catMap = {};
           
-          // Add uncategorized group first
           catMap['__uncategorized'] = {
             id: '__uncategorized',
             name: '未分类',
@@ -2122,16 +2143,36 @@
             }
           });
 
+          // 排序：已置顶的在前（按置顶顺序），其余按数组顺序
+          const pinned = this.pinnedCategories;
+          const sortedCats = [...this.categories].sort((a, b) => {
+            const aP = pinned.includes(a.id);
+            const bP = pinned.includes(b.id);
+            if (aP && !bP) return -1;
+            if (!aP && bP) return 1;
+            return this.categories.indexOf(a) - this.categories.indexOf(b);
+          });
+
           const result = [];
-          if (catMap['__uncategorized'].stocks.length > 0) {
-            result.push(catMap['__uncategorized']);
-          }
-          // 保留分类在 categories 数组中的顺序，不按空/非空拆分
-          this.categories.forEach(cat => {
+          // 标记是否需要插入未分类
+          const hasUncategorized = catMap['__uncategorized'].stocks.length > 0;
+          let ucInserted = false;
+
+          sortedCats.forEach(cat => {
+            // 在指定位置插入未分类
+            const targetPos = this.uncategorizedPosition || 0;
+            if (hasUncategorized && !ucInserted && result.length === targetPos) {
+              result.push(catMap['__uncategorized']);
+              ucInserted = true;
+            }
             if (catMap[cat.id]) {
               result.push(catMap[cat.id]);
             }
           });
+          // 如果未分类还没插入（位置超出），追加到最后
+          if (hasUncategorized && !ucInserted) {
+            result.push(catMap['__uncategorized']);
+          }
           return result;
         },
 
@@ -2179,6 +2220,70 @@
           } catch (e) {
             console.error('Load categories error:', e);
           }
+        },
+
+        isPinned(catId) {
+          return this.pinnedCategories.includes(catId);
+        },
+
+        togglePin(catId) {
+          if (this.isPinned(catId)) {
+            this.pinnedCategories = this.pinnedCategories.filter(id => id !== catId);
+          } else {
+            this.pinnedCategories = [...this.pinnedCategories, catId];
+          }
+          localStorage.setItem('pinnedCategories', JSON.stringify(this.pinnedCategories));
+        },
+
+        saveUncategorizedPosition(pos) {
+          this.uncategorizedPosition = pos;
+          localStorage.setItem('uncategorizedPosition', pos.toString());
+        },
+
+        doCategoryDrop(targetId) {
+          if (!this.dragCategoryIdx || this.dragCategoryIdx === targetId) {
+            this.dragCategoryIdx = null;
+            this.dragOverIdx = null;
+            return;
+          }
+          
+          // 情况1: 拖动未分类到某个位置
+          if (this.dragCategoryIdx === '__uncategorized') {
+            // 计算目标位置（在 categoriesWithStocks 中的 index）
+            const target = this.categoriesWithStocks;
+            const dropIdx = target.findIndex(c => c.id === targetId);
+            if (dropIdx >= 0) {
+              this.saveUncategorizedPosition(dropIdx);
+            }
+            this.dragCategoryIdx = null;
+            this.dragOverIdx = null;
+            return;
+          }
+          
+          // 情况2: 拖未分类上的目标
+          if (targetId === '__uncategorized') {
+            // 把拖动的分类移到 categories 数组最前面
+            const idx = this.categories.findIndex(c => c.id == this.dragCategoryIdx);
+            if (idx > 0) {
+              const item = this.categories.splice(idx, 1)[0];
+              this.categories.splice(0, 0, item);
+              this.saveCategoryOrder();
+            }
+            this.dragCategoryIdx = null;
+            this.dragOverIdx = null;
+            return;
+          }
+          
+          // 情况3: 两个真实分类之间拖动
+          const fromIdx = this.categories.findIndex(c => c.id == this.dragCategoryIdx);
+          const toIdx = this.categories.findIndex(c => c.id == targetId);
+          if (fromIdx >= 0 && toIdx >= 0) {
+            const item = this.categories.splice(fromIdx, 1)[0];
+            this.categories.splice(toIdx, 0, item);
+            this.saveCategoryOrder();
+          }
+          this.dragCategoryIdx = null;
+          this.dragOverIdx = null;
         },
 
         openCategoryModal() {
