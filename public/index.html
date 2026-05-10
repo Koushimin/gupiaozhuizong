@@ -588,8 +588,11 @@
       opacity: 0.8;
     }
     .table-view td {
-      padding: 14px 16px;
+      padding: 12px 12px;
       vertical-align: middle;
+    }
+    .table-view th {
+      padding: 12px 12px;
     }
     .td-reason-col {
       max-width: 180px;
@@ -621,12 +624,11 @@
     .table-view .td-since {
       white-space: nowrap;
     }
-    .table-view .td-actions {
+    .table-view .td-notes {
       white-space: nowrap;
-      text-align: right;
     }
-    .table-view .td-actions button {
-      margin-left: 4px;
+    .table-view .td-notes .notes-content {
+      max-width: 180px;
     }
 
     /* Category picker */
@@ -953,10 +955,9 @@
       .table-stock-code, .td-since, .td-reason-col {
         display: none;
       }
-      .table-view .td-actions button {
-        margin-left: 2px;
-        padding: 6px 8px;
-        font-size: 0.75rem;
+      .td-notes .notes-content {
+        max-width: 100px;
+        font-size: 0.78rem;
       }
       .compact-card .stats-row {
         gap: 10px;
@@ -1047,6 +1048,55 @@
     }
     .theme-light .hamburger-btn span { background: #1a1a2e; }
     .theme-dark .hamburger-btn span { background: #e2e8f0; }
+
+    /* Drag handle for category headers */
+    .category-drag-handle {
+      cursor: grab;
+      font-size: 1rem;
+      opacity: 0.35;
+      transition: opacity 0.2s, transform 0.2s;
+      user-select: none;
+      flex-shrink: 0;
+      width: 24px;
+      text-align: center;
+      line-height: 1;
+    }
+    .category-header:hover .category-drag-handle {
+      opacity: 0.8;
+    }
+    .category-drag-handle:active {
+      cursor: grabbing;
+      opacity: 1;
+      transform: scale(1.1);
+    }
+    .category-header.dragging-over {
+      background: rgba(99,102,241,0.08);
+      border-radius: 8px;
+      padding-left: 8px;
+      padding-right: 8px;
+    }
+
+    /* Notes in table view - prominent */
+    .td-notes {
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .td-notes .notes-content {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      line-height: 1.4;
+    }
+    .td-notes .notes-empty {
+      opacity: 0.3;
+      font-weight: 400;
+    }
+
+    /* Dragging state */
+    .cat-dragging {
+      opacity: 0.3;
+    }
   </style>
 </head>
 <body :class="'theme-' + theme">
@@ -1409,10 +1459,20 @@
         <template x-for="cat in categoriesWithStocks" :key="'tc-'+cat.id">
           <div class="mb-5">
             <!-- Category Header -->
-            <div class="flex items-center gap-2 px-1 mb-2">
+            <div class="flex items-center gap-1 mb-2 category-header" draggable="true"
+                 @click="toggleCategoryExpanded(cat.id)"
+                 @dragstart="dragCategoryIdx = cat.id; event.dataTransfer.effectAllowed = 'move'"
+                 @dragover.prevent="dragOverIdx = cat.id;"
+                 @drop.prevent="if (dragCategoryIdx && dragCategoryIdx !== cat.id) { const fromIdx = categories.findIndex(c => c.id == dragCategoryIdx); const toIdx = categories.findIndex(c => c.id == cat.id); if (fromIdx >= 0 && toIdx >= 0) { const item = categories.splice(fromIdx, 1)[0]; categories.splice(toIdx, 0, item); saveCategoryOrder(); } } dragCategoryIdx = null; dragOverIdx = null;"
+                 @dragleave="dragOverIdx = null"
+                 @dragend="dragCategoryIdx = null; dragOverIdx = null;"
+                 :class="dragOverIdx === cat.id && dragOverIdx !== dragCategoryIdx ? 'dragging-over' : ''"
+                 :style="dragCategoryIdx === cat.id ? 'opacity:0.3;' : ''">
+              <span class="category-drag-handle" @click.stop title="拖动排序">⠿</span>
               <span class="category-color-dot" :style="'background:' + cat.color"></span>
               <span class="text-sm font-semibold" :class="theme === 'light' ? 'text-gray-700' : 'text-gray-300'" x-text="cat.name || '未分类'"></span>
               <span class="text-xs stat-label" x-text="'(' + cat.stocks.length + '只)'"></span>
+              <span class="category-expand-icon" :class="isCategoryExpanded(cat.id) ? 'expanded' : ''" style="margin-left:auto;">▼</span>
             </div>
             <div class="glass-card !p-0 !overflow-hidden" style="border-radius:14px;">
               <table class="table-view">
@@ -1421,16 +1481,16 @@
                     <th @click="toggleSort('time')" style="min-width:130px">
                       股票 <span x-show="sortBy === 'time'" x-text="sortAsc ? '↑' : '↓'"></span>
                     </th>
-                    <th class="text-right">现价</th>
-                    <th @click="toggleSort('daily')" class="text-right" style="cursor:pointer;white-space:nowrap;">
+                    <th class="text-left">现价</th>
+                    <th @click="toggleSort('daily')" class="text-left" style="cursor:pointer;white-space:nowrap;">
                       日涨跌 <span x-show="sortBy === 'daily'" x-text="sortAsc ? '↑' : '↓'"></span>
                     </th>
-                    <th @click="toggleSort('return')" class="text-right" style="cursor:pointer;white-space:nowrap;">
+                    <th @click="toggleSort('return')" class="text-left" style="cursor:pointer;white-space:nowrap;">
                       加入至今 <span x-show="sortBy === 'return'" x-text="sortAsc ? '↑' : '↓'"></span>
                     </th>
-                    <th class="text-right table-stock-code" style="white-space:nowrap;">区间最高/最低</th>
+                    <th class="text-left table-stock-code" style="white-space:nowrap;">最高/最低</th>
                     <th class="td-reason-col" style="min-width:110px;">理由</th>
-                    <th class="text-right" style="min-width:75px;">操作</th>
+                    <th style="min-width:120px;">备注</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1447,27 +1507,27 @@
                           <span x-show="stock.tag" class="stock-tag hidden sm:inline-flex" :class="stock.tag" x-text="stock.tag"></span>
                         </div>
                       </td>
-                      <td class="td-price text-right whitespace-nowrap font-semibold text-sm">
+                      <td class="td-price text-left whitespace-nowrap font-semibold text-sm" style="padding-right:6px;">
                         <span x-text="formatPrice(stock.current_price)"></span>
                       </td>
-                      <td class="td-change text-right whitespace-nowrap text-sm" :class="(stock.daily_change || 0) >= 0 ? 'price-up' : 'price-down'">
+                      <td class="td-change text-left whitespace-nowrap text-xs" :class="(stock.daily_change || 0) >= 0 ? 'price-up' : 'price-down'" style="padding-right:6px;">
                         <span x-text="formatPercent(stock.daily_change)"></span>
                       </td>
-                      <td class="td-since text-right whitespace-nowrap text-sm" :class="stock.change_percent >= 0 ? 'price-up' : 'price-down'">
+                      <td class="td-since text-left whitespace-nowrap text-xs" :class="stock.change_percent >= 0 ? 'price-up' : 'price-down'" style="padding-right:6px;">
                         <span x-text="formatPercent(stock.change_percent)"></span>
                       </td>
-                      <td class="text-right text-xs opacity-60 table-stock-code whitespace-nowrap">
+                      <td class="text-left text-xs opacity-60 table-stock-code whitespace-nowrap" style="padding-right:6px;">
                         <span class="price-up" x-text="formatPrice(stock.highest_price)"></span>
                         <span class="opacity-30 mx-0.5">/</span>
                         <span class="price-down" x-text="formatPrice(stock.lowest_price)"></span>
                       </td>
-                      <td class="td-reason-col text-xs" style="max-width:160px;">
+                      <td class="td-reason-col text-xs" style="max-width:150px;">
                         <span x-show="stock.reason" class="truncate block opacity-70" x-text="stock.reason" :title="stock.reason"></span>
                         <span x-show="!stock.reason" class="opacity-30">—</span>
                       </td>
-                      <td class="td-actions whitespace-nowrap text-right">
-                        <button @click.stop="openEditModal(stock)" class="btn-icon" title="编辑" style="width:28px;height:28px;font-size:0.8rem;display:inline-flex;">✏️</button>
-                        <button @click.stop="removeStock(stock.id, stock.name)" class="btn-danger" style="padding:3px 8px;font-size:0.65rem;">✕</button>
+                      <td class="td-notes whitespace-nowrap">
+                        <span x-show="stock.notes" class="notes-content" x-text="stock.notes" :title="stock.notes"></span>
+                        <span x-show="!stock.notes" class="notes-empty">—</span>
                       </td>
                     </tr>
                   </template>
@@ -1482,7 +1542,16 @@
       <div x-show="!loading && stocks.length > 0 && viewMode === 'compact'">
         <template x-for="cat in categoriesWithStocks" :key="cat.id">
           <div class="category-section">
-            <div class="category-header" @click="toggleCategoryExpanded(cat.id)">
+            <div class="category-header" draggable="true"
+                 @click="toggleCategoryExpanded(cat.id)"
+                 @dragstart="dragCategoryIdx = cat.id; event.dataTransfer.effectAllowed = 'move'"
+                 @dragover.prevent="dragOverIdx = cat.id;"
+                 @drop.prevent="if (dragCategoryIdx && dragCategoryIdx !== cat.id) { const fromIdx = categories.findIndex(c => c.id == dragCategoryIdx); const toIdx = categories.findIndex(c => c.id == cat.id); if (fromIdx >= 0 && toIdx >= 0) { const item = categories.splice(fromIdx, 1)[0]; categories.splice(toIdx, 0, item); saveCategoryOrder(); } } dragCategoryIdx = null; dragOverIdx = null;"
+                 @dragleave="dragOverIdx = null"
+                 @dragend="dragCategoryIdx = null; dragOverIdx = null;"
+                 :class="dragOverIdx === cat.id && dragOverIdx !== dragCategoryIdx ? 'dragging-over' : ''"
+                 :style="dragCategoryIdx === cat.id ? 'opacity:0.3;' : ''">
+              <span class="category-drag-handle" @click.stop title="拖动排序">⠿</span>
               <span class="category-color-dot" :style="'background:' + cat.color"></span>
               <span class="category-name" :class="theme === 'light' ? 'text-gray-800' : 'text-gray-100'" x-text="cat.name || '未分类'"></span>
               <span class="category-stock-count" x-text="cat.stocks.length + '只'"></span>
